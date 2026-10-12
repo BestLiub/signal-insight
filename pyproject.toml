@@ -1,5 +1,5 @@
 [project]
-name = "signal-insight"                 # 发行名：pip 用，习惯用短横线；import用的包名是 signal_insight
+name = "signal_insight"                 # 发行名：pip 用，习惯用短横线；import用的包名是 signal_insight
 version = "0.1.0"
 description = "沈阳国庆信令客流洞察"
 requires-python = ">=3.11"
@@ -8,8 +8,7 @@ dependencies = ["pandas>=2", "numpy>=1.24", "matplotlib>=3.8", "seaborn>=0.13",
 "sqlparse>=0.5", "pyyaml>=6", "scipy", "scikit-learn", "python-docx", "pyarrow"]
 [project.optional-dependencies]
 dev = ["pytest>=7"]                     # 开发依赖：python -m pip install -e ".[dev]"
-app = ["streamlit>=1.36", "plotly>=5.20"]   # 展示平台（D14）：python -m pip
-install -e ".[dev,app]"
+app = ["streamlit>=1.36", "plotly>=5.20"]   # 展示平台（D14）：python -m pipinstall -e ".[dev,app]"
 slides = ["python-pptx>=0.6"]           # D15 选讲：自动生成汇报 PPT 初稿
 [build-system]
 requires = ["setuptools>=61"]
