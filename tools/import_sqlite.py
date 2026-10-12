@@ -1,12 +1,26 @@
 """一次性：把讲师发的 signal.db (SQLite) 搬进 MySQL signal_insight。"""
-import sqlite3, sys
+import os, re, sqlite3, sys
 from pathlib import Path
 import pandas as pd
 from signal_mysql import database as mysql
-SQLITE_PATH = Path(sys.argv[1] if len(sys.argv) > 1 else "data/signal.db")
+
+ROOT = Path(__file__).resolve().parents[1]
+
+def load_env(path=ROOT / ".env.ps1"):
+    """读 .env.ps1 里的 $env:KEY = "value"，省得每开一个新窗口都要手动点源一遍。"""
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    for m in re.finditer(r'^\s*\$env:(\w+)\s*=\s*"(.*)"\s*$', text, re.M):
+        os.environ.setdefault(m.group(1), m.group(2))
+
+load_env()
+SQLITE_PATH = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "data" / "signal.db")
 SCHEMA = "signal_insight"
 if not SQLITE_PATH.exists():
     raise SystemExit(f"找不到文件: {SQLITE_PATH.resolve()}")
+if not os.environ.get("SIGNAL_MYSQL_PASSWORD"):
+    raise SystemExit("没有数据库密码：.env.ps1 缺失，或里面没写 SIGNAL_MYSQL_PASSWORD")
 mysql.create_schema(SCHEMA)
 src = sqlite3.connect(SQLITE_PATH)
 dst = mysql.connect(SCHEMA)
