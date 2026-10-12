@@ -1,0 +1,7 @@
+[project]
+name = "signal-insight"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["sqlalchemy>=2.0", "pymysql", "sqlparse", "pandas", "numpy"]
+[tool.setuptools.packages.find]
+where = ["src"]
