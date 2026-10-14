@@ -134,7 +134,13 @@ def frame_types(df):
 def write_frame(df,name,con,if_exists='fail',index=True,**kwargs):
     """DataFrame 使用真实 SQLAlchemy MySQL 连接；replace 属于 DDL 阶段。"""
     ident(name)
-    kwargs.setdefault('dtype',frame_types(df));kwargs.setdefault('chunksize',1000)
+    if if_exists == 'replace':
+        con.commit()
+        con.execute(f"DROP TABLE IF EXISTS {ident(name)}")
+        con.commit()
+        if_exists == 'append'
+    kwargs.setdefault('dtype',frame_types(df))
+    kwargs.setdefault('chunksize',1000)
     # Connection 已在事务中时 pandas 不另行提交，分区 DML 可整体回滚。
     return df.to_sql(name,con.sa,if_exists=if_exists,index=index,**kwargs)
 
