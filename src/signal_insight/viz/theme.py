@@ -16,7 +16,7 @@ from matplotlib import font_manager
 from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.patches import Rectangle
 
-from . import config
+from .. import config
 
 __all__ = ["MAIN", "MAIN_LIGHT", "MAIN_DARK", "MAIN_MID", "GRAY", "GRAY_DARK", "RED", "AMBER",
            "INK", "MUTED", "FAINT", "AREA_COLOR", "SEG_COLOR", "apply_theme", "finish"]
