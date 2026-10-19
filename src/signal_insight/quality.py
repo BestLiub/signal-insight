@@ -1,4 +1,4 @@
-"""数据质量：稽核记录。只会因为“稽核记录的格式变了”而改（docs/工程规范 nd 第2条）
+"""数据质量：稽核记录（D02）、数据画像（D03）。只会因为“稽核记录的格式变了”而改（docs/工程规范.md 第 2 条）。
 D01 在 notebook 里写的 dq_record 用的是全局变量 con；搬进来以后连接改成第一个参数——
 函数偷偷依赖 notebook 的全局变量，是封装时最常见的坑；在 notebook 里能跑，搬出来就 NameError。
 
@@ -37,3 +37,25 @@ def dq_record(con, check_id: str, dimension: str, item: str, field: str, result:
     mysql.write_frame(new, "dq_check_result", con, if_exists="replace", index=False)
     con.commit() # MySQL:记完就提交。连接已在事务里时 pandas 不会替我们提交，关连接时没提交的会被回滚
     print(f"[{status}] {check_id} {dimension} | {item}: {result}")
+
+
+def profile(df: pd.DataFrame) -> pd.DataFrame:
+    """数据画像：每个字段一行——类型、缺失数（空值 + 空白字符串）、缺失率、唯一值个数、示例值。
+    "缺失"不只是空值：只有空格的字符串看起来有值，其实没有任何信息，也算缺失（D01 的坑）。
+    纯计算：只接收 DataFrame，不读库。
+    """
+    rows = []
+    for col in df.columns:
+        s = df[col]
+        n_null = int(s.isna().sum())
+        is_text = pd.api.types.is_string_dtype(s) or s.dtype == object
+        n_blank = int(s.astype("string").str.strip().eq("").sum()) if is_text else 0
+        rows.append({
+            "field": col,
+            "dtype": str(s.dtype),
+            "n_missing": n_null + n_blank,
+            "missing_rate": (n_null + n_blank) / len(s) if len(s) else 0.0,
+            "n_unique": int(s.nunique()),
+            "example": s.dropna().iloc[0] if s.notna().any() else None,
+        })
+    return pd.DataFrame(rows, columns=["field", "dtype", "n_missing", "missing_rate", "n_unique", "example"])
