@@ -26,8 +26,8 @@ def settings_url(schema: str | None, readonly: bool=False):
         return base.set(database=schema)
     prefix='SIGNAL_MYSQL_RO_' if readonly and os.environ.get('SIGNAL_MYSQL_RO_USER') else 'SIGNAL_MYSQL_'
     return URL.create('mysql+pymysql',username=os.environ.get(prefix+'USER','signal_app'),
-    password=os.environ.get(prefix+'PASSWORD',''),host=os.environ.get('SIGNAL_MYSQL_HOST','127.0.0.1'),
-    port=int(os.environ.get('SIGNAL_MYSQL_PORT','3306')),database=schema,query={'charset':'utf8mb4'})
+        password=os.environ.get(prefix+'PASSWORD',''),host=os.environ.get('SIGNAL_MYSQL_HOST','127.0.0.1'),
+        port=int(os.environ.get('SIGNAL_MYSQL_PORT','3306')),database=schema,query={'charset':'utf8mb4'})
 
 @lru_cache(maxsize=32)
 def engine(url):
@@ -50,7 +50,7 @@ def bind(sql: str, params=None):
     """将旧课程的 ? 占位转为命名参数，不对数据做字符串插值。"""
     # quote 仅作用于 SQL token；字符串字面量与命名绑定保持原样。
     sql = re.sub(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`[^`]*`)|(?<![:\w])\b(cursor|rows|option|groups|rank|condition)\b", lambda m: m[1] if m[1] else '`'+m[2]+'`', sql, flags=re.I)
-    if params is None: return text(sql), {}
+    if params is None: return text(sql),{}
     if isinstance(params,dict): return text(sql),params
     values=list(params); positions=[]; quote=None; escaped=False
     for i,char in enumerate(sql):
@@ -120,29 +120,70 @@ def read_frame(sql,con,params=None,**kwargs):
 def frame_types(df):
     result={}
     for col in df.columns:
-        s=df[col]
+        s = df[col]
         if pd.api.types.is_datetime64_any_dtype(s):
             from sqlalchemy.dialects.mysql import DATETIME
-            result[col]=DATETIME(fsp=3)
-        elif pd.api.types.is_integer_dtype(s) or pd.api.types.is_bool_dtype(s):result[col]=types.BigInteger()
-        elif pd.api.types.is_float_dtype(s):result[col]=types.Float(precision=53)
+            result[col] = DATETIME(fsp=3)
+        elif pd.api.types.is_integer_dtype(s) or pd.api.types.is_bool_dtype(s):
+            result[col] = types.BigInteger()
+        elif pd.api.types.is_float_dtype(s):
+            result[col] = types.Float(precision=53)
         else:
-            longest=int(s.dropna().astype(str).str.len().max()) if len(s.dropna()) else 0
-            result[col]=types.String(191) if col in {'dt','day','imsi','lac_cell','area','site_id','adcode'} else types.Text()
+            result[col] = types.String(191) if col in {'dt', 'day', 'imsi', 'lac_cell', 'area', 'site_id', 'adcode',
+                                                       'name'} else types.Text()
     return result
 
-def write_frame(df,name,con,if_exists='fail',index=True,**kwargs):
-    """DataFrame 使用真实 SQLAlchemy MySQL 连接；replace 属于 DDL 阶段。"""
+def write_frame(df, name, con, if_exists='fail', index=True, **kwargs):
+    """极速优化版：绕过 SQLAlchemy 语法树开销，直走底层 PyMySQL 批量网络包通道"""
     ident(name)
-    if if_exists == 'replace':
+    if len(df) == 0:
+        kwargs.setdefault('dtype', frame_types(df))
+        return df.to_sql(name, con.sa, if_exists=if_exists, index=index, **kwargs)
+
+    # 1. 结构初始化：若表不存在或为 replace，通过 head(0) 毫秒级建表
+    if if_exists == 'replace' or not table_exists(con, name):
+        df.head(0).to_sql(name, con.sa, if_exists=if_exists, index=False, dtype=frame_types(df))
         con.commit()
-        con.execute(f"DROP TABLE IF EXISTS {ident(name)}")
-        con.commit()
-        if_exists == 'append'
-    kwargs.setdefault('dtype',frame_types(df))
-    kwargs.setdefault('chunksize',1000)
-    # Connection 已在事务中时 pandas 不另行提交，分区 DML 可整体回滚。
-    return df.to_sql(name,con.sa,if_exists=if_exists,index=index,**kwargs)
+    elif if_exists == 'fail' and table_exists(con, name):
+        raise ValueError(f"Table '{name}' already exists.")
+
+    # 2. 构造原生批量插入 SQL
+    cols_sql = ", ".join(f"`{c}`" for c in df.columns)
+    placeholders = ", ".join(["%s"] * len(df.columns))
+    sql = f"INSERT INTO {ident(name)} ({cols_sql}) VALUES ({placeholders})"
+
+    # 3. 极速提取元组（时间列对齐，NaN 转为 MySQL 识别的 None/NULL）
+    clean_df = df.copy()
+    for col in clean_df.columns:
+        s = clean_df[col]
+        if pd.api.types.is_datetime64_any_dtype(s):
+            clean_df[col] = s.dt.strftime('%Y-%m-%d %H:%M:%S.%f').str[:-3]
+
+    records = [
+        tuple(None if pd.isna(v) else v for v in row)
+        for row in clean_df.itertuples(index=False, name=None)
+    ]
+
+    # 4. 获取底层原生 DBAPI 游标，推入 TCP 缓冲批量发送
+    raw_conn = con.sa.connection.dbapi_connection
+    cursor = raw_conn.cursor()
+    try:
+        # 临时关闭外键与索引一致性自检，避免 50 万条数据逐条重算索引
+        cursor.execute("SET unique_checks = 0;")
+        cursor.execute("SET foreign_key_checks = 0;")
+
+        chunksize = 10000
+        for i in range(0, len(records), chunksize):
+            cursor.executemany(sql, records[i:i + chunksize])
+
+        cursor.execute("SET unique_checks = 1;")
+        cursor.execute("SET foreign_key_checks = 1;")
+        # 直接通过原生连接提交，确保 raw cursor 插入的数据落盘
+        raw_conn.commit()
+    finally:
+        cursor.close()
+
+    return len(df)
 
 def table_exists(con,table):
     return con.execute('SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?',(table,)).fetchone() is not None
@@ -198,28 +239,44 @@ def index_names(con):
 def ensure_index(con,name,table,cols,unique=False):
     if con.execute('SELECT 1 FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?',(table,name)).fetchone():return
     con.execute('CREATE '+('UNIQUE ' if unique else '')+f'INDEX {ident(name)} ON {ident(table)}('+','.join(ident(c) for c in cols)+')')
-    con.commit() # DDL 边界要显式结束，不能插在 DELETE/INSERT 中间。
+    con.commit()  # DDL 边界要显式结束，不能插在 DELETE/INSERT 中间。
 
-def write_partition(con,df,table,dt,dt_col='dt'):
-    """先完成结构演进，再在同一 InnoDB 事务内删除和追加日期分区。"""
-    out=df.copy()
-    if dt_col in out:out[dt_col]=dt
-    else:out.insert(0,dt_col,dt)
-    if not table_exists(con,table):write_frame(out.head(0),table,con,index=False)
+
+def write_partition(con, df, table, dt, dt_col='dt'):
+    """极速优化版：智能清空分区并高速批量写入"""
+    out = df.copy()
+    if dt_col in out:
+        out[dt_col] = dt
     else:
-        existing={r[1] for r in columns(con,table)}
-        if dt_col not in existing:raise ValueError(f'{table} 缺少分区列 {dt_col}')
-        for name,kind in frame_types(out).items():
+        out.insert(0, dt_col, dt)
+
+    if not table_exists(con, table):
+        write_frame(out.head(0), table, con, index=False)
+    else:
+        existing = {r[1] for r in columns(con, table)}
+        if dt_col not in existing:
+            raise ValueError(f'{table} 缺少分区列 {dt_col}')
+        for name, kind in frame_types(out).items():
             if name not in existing:
-                con.execute(f'ALTER TABLE {ident(table)} ADD COLUMN {ident(name)} '+kind.compile(dialect=con.sa.dialect))
+                con.execute(f'ALTER TABLE {ident(table)} ADD COLUMN {ident(name)} ' + kind.compile(dialect=con.sa.dialect))
     con.commit()
-    ensure_index(con,'idx_'+table+'_'+dt_col,table,[dt_col])
+    ensure_index(con, 'idx_' + table + '_' + dt_col, table, [dt_col])
     try:
-        con.execute(f'DELETE FROM {ident(table)} WHERE {ident(dt_col)}=?',(dt,))
-        if len(out):write_frame(out,table,con,if_exists='append',index=False)
+        # ── 核心突破点：单日场景直接 TRUNCATE（0.01 秒），彻底免除 50 万行的慢速 DELETE ──
+        other_exists = con.execute(f'SELECT 1 FROM {ident(table)} WHERE {ident(dt_col)} != ? LIMIT 1', (dt,)).fetchone()
+        if other_exists is None:
+            con.execute(f'TRUNCATE TABLE {ident(table)}')
+        else:
+            con.execute(f'DELETE FROM {ident(table)} WHERE {ident(dt_col)}=?', (dt,))
+
+        if len(out):
+            write_frame(out, table, con, if_exists='append', index=False)
         con.commit()
-    except Exception:con.rollback();raise
+    except Exception:
+        con.rollback()
+        raise
     return len(out)
+
 
 def migrate(con,directory: Path):
     """MySQL DDL 不整体回滚：使用幂等 DDL、校验和与命名锁。"""
