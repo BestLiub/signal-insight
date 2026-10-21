@@ -24,6 +24,8 @@ visitor:                  # 傍晚访客与客群标签（D08）
     visit_zhongjie: 中街商圈
 hourly:                   # 每人每小时一个位置（D09）
   min_cover_minutes: 30   # 停留覆盖这个小时至少这么久，才用停留的位置；否则用信令中位位置
+privacy:                  # 对外数据的隐私规则（D09，docs/工程规范.md 第 9 条）
+  min_cell_users: 5       # 少于这么多人的格子不对外展示（小样本抑制）
 # 指标口径表 dim_metric 的文字模板（D08，docs/工程规范.md 第 9 条）。
 # {a.b} 会被换成上面对应的参数：参数一改，口径表跟着变，永远不会和代码脱节。
 metrics:
