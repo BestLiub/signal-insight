@@ -1,8 +1,8 @@
-"""汇总层（dws_）：停留识别（D06）。
+"""汇总层（dws_）：停留识别（D06）、过夜地与出行（D07）。
 
 纯计算（docs/工程规范.md 第 4 条）：输入带坐标的信令，输出停留表；多边形、热点由调用方传进来，这里不读库。
 参数从 settings 取，代码里不写业务数字（docs/工程规范.md 第 8 条）。
-现在汇总层只有一张表，一个文件就够；表多了（超过 3 张或约 300 行）就拆成同名文件夹（docs/工程规范.md 第 5 条）。
+现在汇总层有三张表，一个文件就够；表多了（超过 3 张或约 300 行）就拆成同名文件夹（docs/工程规范.md 第 5 条）。
 """
 import numpy as np
 import pandas as pd
@@ -61,3 +61,47 @@ def build_stay(sig: pd.DataFrame, settings: dict, districts: dict, aois: dict, h
     stay["aoi"] = geo.point_in_polygons(stay["lng"], stay["lat"], aois)
     stay["dist_xita_m"] = geo.haversine(stay["lat"], stay["lng"], hot["lat"], hot["lng"]).round()
     return stay[STAY_COLS]
+
+
+NIGHT_COLS = ["imsi", "night_lng", "night_lat", "night_district", "night_dist_xita_m", "night_min"]
+
+
+def build_night(stay: pd.DataFrame, day: str, settings: dict) -> pd.DataFrame:
+    """每人一个过夜地：与夜间时段重叠最长、且重叠不少于 night.min_overlap_minutes 的那个停留。
+
+    两个区间重叠多少：min(结束, 区间右端) − max(开始, 区间左端)，负数当 0。
+    识别不出过夜地的人不在这张表里——后面所有基于它的比例，分母都是“能识别的人”。
+    """
+    p = settings["night"]
+    d0 = pd.Timestamp(day)
+    start, end = d0 + pd.Timedelta(hours=p["start_hour"]), d0 + pd.Timedelta(hours=p["end_hour"])
+    overlap = stay["end_time"].clip(upper=end) - stay["start_time"].clip(lower=start)
+    s = stay.assign(night_min=(overlap.dt.total_seconds() / 60).clip(lower=0))
+    night = s[s["night_min"] >= p["min_overlap_minutes"]].sort_values("night_min").groupby("imsi").tail(1)
+    night = night.rename(columns={"lng": "night_lng", "lat": "night_lat", "district": "night_district",
+                                  "dist_xita_m": "night_dist_xita_m"})
+    return night[NIGHT_COLS].reset_index(drop=True)
+
+
+TRIP_COLS = ["imsi", "trip_seq", "o_seq", "d_seq", "depart_time", "arrive_time", "duration_min", "dist_m",
+             "o_lng", "o_lat", "d_lng", "d_lat", "o_district", "d_district", "o_aoi", "d_aoi",
+             "o_dist_xita_m", "d_dist_xita_m"]
+
+
+def build_trip(stay: pd.DataFrame, settings: dict) -> pd.DataFrame:
+    """每个人相邻的两个停留连成一次出行；两个质心相距不到 trip.min_dist_m 的不算（同一个地方被切成了两段）。"""
+    s = stay.sort_values(["imsi", "stay_seq"])
+    nxt = s.groupby("imsi").shift(-1)                                # 同一个人的下一个停留
+    trip = pd.DataFrame({
+        "imsi": s["imsi"], "o_seq": s["stay_seq"], "d_seq": nxt["stay_seq"],
+        "depart_time": s["end_time"], "arrive_time": nxt["start_time"],
+        "o_lng": s["lng"], "o_lat": s["lat"], "d_lng": nxt["lng"], "d_lat": nxt["lat"],
+        "o_district": s["district"], "d_district": nxt["district"], "o_aoi": s["aoi"], "d_aoi": nxt["aoi"],
+        "o_dist_xita_m": s["dist_xita_m"], "d_dist_xita_m": nxt["dist_xita_m"],
+    }).dropna(subset=["d_seq"])                                      # 最后一个停留后面没有出行
+    trip["dist_m"] = geo.haversine(trip["o_lat"], trip["o_lng"], trip["d_lat"], trip["d_lng"]).round()
+    trip = trip[trip["dist_m"] >= settings["trip"]["min_dist_m"]].copy()
+    trip["duration_min"] = ((trip["arrive_time"] - trip["depart_time"]).dt.total_seconds() / 60).round(1)
+    trip["trip_seq"] = trip.groupby("imsi").cumcount() + 1
+    trip["d_seq"] = trip["d_seq"].astype(int)
+    return trip[TRIP_COLS].reset_index(drop=True)
