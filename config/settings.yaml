@@ -1,7 +1,7 @@
 # config/settings.yaml —— 业务参数的唯一来源（docs/工程规范.md 第 8 条）
 # 改参数改这里，不改代码；代码里不写 500 米、30 分钟这类业务数字。
 # 一律 UTF-8 保存（Windows 记事本另存为时选 UTF-8）。
-version: "1.1"
+version: "1.2"
 hotspot:                  # 热点：D04 定的，D06 起从这里读
   name: 西塔
   top_n: 5                # 连接用户数前几的站点参与加权，定热点中心
@@ -15,3 +15,10 @@ night:                    # 过夜地（D07）
   min_overlap_minutes: 60    # 与夜间时段至少重叠这么久的停留，才认作过夜地
 trip:                     # 出行（D07）
   min_dist_m: 500         # 相邻两个停留相距这么远才算一次出行
+visitor:                  # 傍晚访客与客群标签（D08）
+  evening_hour: 17        # 傍晚访客：西塔停留在这个时刻之后仍在
+  late_hour: 23           # 深夜：这个时刻之后仍在西塔
+  near_km: 1.5            # 周边居民：过夜地离热点不到这个距离
+  linked_aois:            # 联动商圈：宽表里每个商圈一列“当天去没去过”（列名: 商圈名）
+    visit_taiyuan: 太原街商圈
+    visit_zhongjie: 中街商圈
