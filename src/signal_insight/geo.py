@@ -6,6 +6,7 @@
 四个函数的原型在 D03 的 notebook 里（代码格 12、18、24），那几份不删、不改：D03 是写出 dim_cell 的那天的记录。
 D03 写的时候就把读库留在了调用方（rings_from_points 接收读好的顶点表），所以搬过来只补了类型标注和说明。
 """
+import math
 import numpy as np
 import pandas as pd
 from matplotlib.path import Path as MplPath
@@ -21,6 +22,17 @@ def haversine(lat1, lng1, lat2, lng2):
     lat1, lng1, lat2, lng2 = (np.radians(np.asarray(v, dtype=float)) for v in (lat1, lng1, lat2, lng2))
     a = np.sin((lat2 - lat1) / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin((lng2 - lng1) / 2) ** 2
     return 2 * EARTH_R * np.arcsin(np.sqrt(a))
+
+
+def dist_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """两点间的球面距离（米），标量版（D06）：在 Python 循环里一次只算一对点时用它。
+
+    为什么要两个版本：numpy 的优势是"一次算一百万对"；单独算一对点时，构造数组的开销比计算本身还大，
+    比这个 math 版慢几十倍。停留识别的内层循环一次只比一对点，所以用这个。
+    """
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lng2 - lng1) / 2) ** 2
+    return 2 * EARTH_R * math.asin(math.sqrt(a))
 
 
 def rings_from_points(points: pd.DataFrame, key: str) -> dict[str, list[np.ndarray]]:
