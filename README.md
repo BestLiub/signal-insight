@@ -24,10 +24,20 @@
 
 ## 怎么跑
 
-```powershell
-. .\.env.ps1                                         # 新开的终端先载入 MySQL 账号（.env.ps1 不进 Git）
-python -m signal_insight.pipeline --day 2018-10-03   # 一键从 ODS 生成 dwd_signal、维表、dws_stay、dws_night、dws_trip
-python -m pytest                                     # 跑全部测试：写库的测试只用临时库，不动 signal_insight
+```bash
+python -m signal_insight.pipeline --day 2018-10-03    # 一键从 ODS 生成明细层、维表、全部 dws_ 表和 dim_metric
+python -m pytest                                     # 跑全部测试
 ```
+
+## 数据表
+
+| 层 | 表 | 生成它的代码 |
+|---|---|---|
+| 原始层 | `ods_signal` 等 9 张（讲师发的库，只读） | — |
+| 明细层 | `dwd_signal` | `dwd.py` |
+| 维表 | `dim_cell`、`dim_hotspot`、`dim_metric` | `dims.py` |
+| 汇总层 | `dws_stay`、`dws_night`、`dws_trip`、`dws_user_day`、`dws_user_hour` | `dws/` 下同名文件 |
+
+指标口径见 `docs/指标口径表.csv`（由 `config/settings.yaml` 渲染）。
 
 团队工程规范见 `docs/工程规范.md`。
