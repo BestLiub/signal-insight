@@ -25,7 +25,7 @@
 
 ```powershell
 . .\.env.ps1                                         # 新开的终端先载入 MySQL 账号（.env.ps1 不进 Git）
-python -m signal_insight.pipeline --day 2018-10-03   # 一键从 ODS 生成 dwd_signal、维表、dws_stay
+python -m signal_insight.pipeline --day 2018-10-03   # 一键从 ODS 生成 dwd_signal、维表、dws_stay、dws_night、dws_trip
 python -m pytest                                     # 跑全部测试：写库的测试只用临时库，不动 signal_insight
 ```
 
