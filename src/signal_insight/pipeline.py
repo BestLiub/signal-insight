@@ -124,6 +124,11 @@ def build_dim_metric(settings):
     return dims.build_dim_metric(settings)
 
 
+@step
+def build_user_hour(stay, sig, day, settings, districts, aois, hot):
+    return dws.build_user_hour(stay, sig, day, settings, districts, aois, hot)
+
+
 def _replace(table):
     """生成一个“整表替换某张表”的步骤；函数名带上表名，etl_log 里才分得清是哪张表。"""
     def write(con, df):
@@ -138,6 +143,7 @@ write_dws_night = _replace("dws_night")
 write_dws_trip = _replace("dws_trip")
 write_dws_user_day = _replace("dws_user_day")
 write_dim_metric = _replace("dim_metric")
+write_dws_user_hour = _replace("dws_user_hour")
 
 
 def run_day(day: str | None = None, db_path=None) -> pd.DataFrame:
@@ -169,6 +175,7 @@ def run_day(day: str | None = None, db_path=None) -> pd.DataFrame:
         write_dws_trip(con, trip)
         write_dws_user_day(con, build_user_day(sig, stay, trip, night, day, settings))
         write_dim_metric(con, build_dim_metric(settings))
+        write_dws_user_hour(con, build_user_hour(stay, sig, day, settings, districts, aois, hot))
         log = pd.DataFrame(_LOG[start:]).assign(dt=day, run_id=batch)
         db.append_table(con, log, "etl_log")
     finally:
