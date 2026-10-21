@@ -1,7 +1,8 @@
-"""纬度表：dim_cell (扇区 → 站点 → 区县 → 商圈)、dim_hotspot (热点)。
+"""维度表：dim_cell（扇区 → 站点 → 区县 → 商圈）、dim_hotspot（热点）、dim_metric（指标口径，D08）。
 
-纯计算（docs/工程规范.md第 4 条）：多边形由调用方用 geo.rings_from_points 还原好传进来，这里不读库。
+纯计算（docs/工程规范.md 第 4 条）：多边形由调用方用 geo.rings_from_points 还原好传进来，这里不读库。
 """
+import re
 import numpy as np
 import pandas as pd
 
@@ -43,3 +44,33 @@ def build_dim_hotspot(dwd: pd.DataFrame, dim_cell: pd.DataFrame, top_n: int,
         "radius_m": radius_m,
         "note": f"连接用户前 {top_n} 的站点按用户数加权的中心",
     }])
+
+
+METRIC_COLS = ["metric", "meaning", "definition", "params", "source_table"]
+METRIC_LABELS = {"metric": "指标", "meaning": "业务含义", "definition": "计算口径", "params": "参数",
+                 "source_table": "来源表", "version": "版本"}           # 给人看的表头：报告、平台、导出的口径表
+_PLACEHOLDER = re.compile(r"\{([a-z_]+(?:\.[a-z_]+)+)\}")
+
+
+def render(template: str, settings: dict) -> str:
+    """把模板里的 {stay.min_minutes} 这类占位符换成 settings 里对应的值；找不到的参数直接报错。"""
+    def lookup(m):
+        node = settings
+        for key in m.group(1).split("."):
+            if not isinstance(node, dict) or key not in node:
+                raise KeyError(f"口径模板引用了不存在的参数：{m.group(1)}")
+            node = node[key]
+        return f"{node:g}" if isinstance(node, float) else str(node)
+    return _PLACEHOLDER.sub(lookup, str(template))
+
+
+def build_dim_metric(settings: dict) -> pd.DataFrame:
+    """指标口径表：文字由 settings.yaml 的 metrics 模板渲染，口径和代码用的是同一份参数（docs/工程规范.md 第 9 条）。
+
+    D08 以前这张表是手写的：改了参数忘了改口径表，两边就对不上。现在参数一改，口径表跟着变。
+    版本列取 settings 的 version。
+    """
+    rows = [{k: render(m[k], settings) for k in METRIC_COLS} for m in settings["metrics"]]
+    out = pd.DataFrame(rows, columns=METRIC_COLS)
+    out["version"] = f"v{settings['version']}"
+    return out

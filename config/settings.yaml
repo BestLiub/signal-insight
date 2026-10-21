@@ -22,3 +22,51 @@ visitor:                  # 傍晚访客与客群标签（D08）
   linked_aois:            # 联动商圈：宽表里每个商圈一列“当天去没去过”（列名: 商圈名）
     visit_taiyuan: 太原街商圈
     visit_zhongjie: 中街商圈
+# 指标口径表 dim_metric 的文字模板（D08，docs/工程规范.md 第 9 条）。
+# {a.b} 会被换成上面对应的参数：参数一改，口径表跟着变，永远不会和代码脱节。
+metrics:
+  - metric: 西塔停留
+    meaning: 在西塔停下来待了一段时间
+    definition: "停留质心距{hotspot.name}中心 ≤ 半径，且持续 ≥ 最短时长"
+    params: "半径 {hotspot.radius_m} 米；最短 {stay.min_minutes} 分钟"
+    source_table: dws_stay
+  - metric: 傍晚访客
+    meaning: 国庆当天傍晚后在西塔待过的人
+    definition: "有西塔停留，且该停留结束时刻 ≥ {visitor.evening_hour}:00"
+    params: "{visitor.evening_hour}:00"
+    source_table: dws_stay
+  - metric: 西塔停留时长
+    meaning: 在西塔待了多久
+    definition: 当天所有西塔停留时长之和；每段按首条到末条信令计
+    params: "{visitor.late_hour} 点后仍在者为删失，只是下限"
+    source_table: dws_user_day
+  - metric: 过夜地
+    meaning: 凌晨待得最久的地方（不等于家）
+    definition: "与 {night.start_hour}:00–{night.end_hour}:00 重叠最长且重叠 ≥ {night.min_overlap_minutes} 分钟的停留"
+    params: "{night.min_overlap_minutes} 分钟"
+    source_table: dws_night
+  - metric: 客源距离
+    meaning: 从多远来
+    definition: 过夜地质心到西塔中心的直线距离
+    params: 直线距离，不是路程
+    source_table: dws_night
+  - metric: 客群标签
+    meaning: 是哪类人
+    definition: "按过夜地：不明 / 市外 / {visitor.near_km} 公里内为周边居民 / 其余为市内来访"
+    params: "{visitor.near_km} 公里"
+    source_table: dws_user_day
+  - metric: 客群标签（修正）
+    meaning: 是哪类人，含当天从外地进城的人
+    definition: 当天第一条信令在市域外、之后进入市域，或过夜地在市外：外地来客；其余同客群标签
+    params: "—"
+    source_table: dws_user_day.segment_v2
+  - metric: 出行
+    meaning: 从一个地方到另一个地方
+    definition: "相邻两个停留质心相距 ≥ {trip.min_dist_m} 米"
+    params: "{trip.min_dist_m} 米"
+    source_table: dws_trip
+  - metric: 商圈联动率
+    meaning: 西塔访客还去了哪个商圈
+    definition: 傍晚访客中，当天在该商圈有停留的人的占比
+    params: 商圈边界用 v2
+    source_table: dws_user_day
