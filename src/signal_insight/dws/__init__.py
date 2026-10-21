@@ -7,3 +7,4 @@ from .stay import STAY_COLS, build_stay, find_segments
 from .night import NIGHT_COLS, build_night
 from .trip import TRIP_COLS, build_trip
 from .user_day import build_user_day, classify_segment
+from .user_hour import build_user_hour

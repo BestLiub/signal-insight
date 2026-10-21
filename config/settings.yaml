@@ -1,7 +1,7 @@
 # config/settings.yaml —— 业务参数的唯一来源（docs/工程规范.md 第 8 条）
 # 改参数改这里，不改代码；代码里不写 500 米、30 分钟这类业务数字。
 # 一律 UTF-8 保存（Windows 记事本另存为时选 UTF-8）。
-version: "1.2"
+version: "1.3"
 hotspot:                  # 热点：D04 定的，D06 起从这里读
   name: 西塔
   top_n: 5                # 连接用户数前几的站点参与加权，定热点中心
@@ -22,6 +22,8 @@ visitor:                  # 傍晚访客与客群标签（D08）
   linked_aois:            # 联动商圈：宽表里每个商圈一列“当天去没去过”（列名: 商圈名）
     visit_taiyuan: 太原街商圈
     visit_zhongjie: 中街商圈
+hourly:                   # 每人每小时一个位置（D09）
+  min_cover_minutes: 30   # 停留覆盖这个小时至少这么久，才用停留的位置；否则用信令中位位置
 # 指标口径表 dim_metric 的文字模板（D08，docs/工程规范.md 第 9 条）。
 # {a.b} 会被换成上面对应的参数：参数一改，口径表跟着变，永远不会和代码脱节。
 metrics:
