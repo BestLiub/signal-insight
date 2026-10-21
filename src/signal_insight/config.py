@@ -29,11 +29,10 @@ REPORT_DIR = PROJECT_ROOT / "reports"         # 生成的报告、备忘录（D0
 LANDING_DIR = DATA_DIR / "landing"            # 上游每天推送的分区文件放这里（D11）
 SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"   # 业务参数的唯一来源（D06）
 # MySQL 逻辑库名：默认值就是课程约定的名字；环境变量里设了就用环境变量的（换库不用改代码）
-DB_SCHEMA = os.environ.get("SIGNAL_INSIGHT_SCHEMA", "signal_insight")
+DB_SCHEMA = os.environ.get("SIGNAL_INSIGHT_SCHEMA", "").strip() or "signal_insight"
      # 探索库：ODS + D01–D10 的结果表
-CHECKPOINT_SCHEMA = os.environ.get("SIGNAL_CHECKPOINT_SCHEMA",
-"signal_checkpoint")  # 检查点库：跟丢时恢复前一天的表
-WAREHOUSE_SCHEMA = os.environ.get("SIGNAL_WAREHOUSE_SCHEMA", "signal_warehouse")
+CHECKPOINT_SCHEMA = os.environ.get("SIGNAL_CHECKPOINT_SCHEMA", "").strip() or "signal_checkpoint"  # 检查点库：跟丢时恢复前一天的表
+WAREHOUSE_SCHEMA = os.environ.get("SIGNAL_WAREHOUSE_SCHEMA", "").strip() or "signal_warehouse"
     # 生产库（D11）：多日分区
 # 口径常量：写两份、两份不一致的代价比重复大得多，所以第二次出现就收进来（封装触发条件 T3）
 UTC_OFFSET_HOURS = 8           # 原始时间戳是 UTC 毫秒；北京时间 = UTC + 8 小时（D01 用作息验证过）

@@ -3,7 +3,7 @@ name = "signal_insight"                 # 发行名：pip 用，习惯用短横�
 version = "0.1.0"
 description = "沈阳国庆信令客流洞察"
 requires-python = ">=3.11"
-dependencies = ["pandas>=2", "numpy>=1.24", "matplotlib>=3.8", "seaborn>=0.13",
+dependencies = ["pandas>=2,<3", "numpy>=1.24", "matplotlib>=3.8", "seaborn>=0.13",
 "pyecharts>=2", "SQLAlchemy>=2,<3", "PyMySQL>=1.1", "cryptography>=42",
 "sqlparse>=0.5", "pyyaml>=6", "scipy", "scikit-learn", "python-docx", "pyarrow"]
 [project.optional-dependencies]
@@ -18,3 +18,4 @@ where = ["src"]                         # 包在 src/ 下面：data、notebooks 
 [tool.pytest.ini_options]
 testpaths = ["tests"]                   # 在项目根目录运行 python -m pytest 时从这里找测试
 pythonpath = [".","src"]
+addopts = "-ra"                         # 结尾列出跳过的测试和原因：连不上 MySQL 时“需要数据”的测试会被跳过，要看得见
