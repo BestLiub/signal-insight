@@ -104,6 +104,16 @@ def build_stay(sig, settings, districts, aois, hot):
     return dws.build_stay(sig, settings, districts, aois, hot)
 
 
+@step
+def build_night(stay, day, settings):
+    return dws.build_night(stay, day, settings)
+
+
+@step
+def build_trip(stay, settings):
+    return dws.build_trip(stay, settings)
+
+
 def _replace(table):
     """生成一个“整表替换某张表”的步骤；函数名带上表名，etl_log 里才分得清是哪张表。"""
     def write(con, df):
@@ -114,10 +124,12 @@ def _replace(table):
 
 # 汇总层现在都是整表替换：只有一天的数据，这样最简单。
 write_dws_stay = _replace("dws_stay")
+write_dws_night = _replace("dws_night")
+write_dws_trip = _replace("dws_trip")
 
 
 def run_day(day: str | None = None, db_path=None) -> pd.DataFrame:
-    """跑一天：读 ODS → 清洗 → 维表 → 停留 → 写库 → 把步骤记录写进 etl_log。返回本次运行的步骤记录。
+    """跑一天：读 ODS → 清洗 → 维表 → 停留 → 过夜地、出行 → 写库 → 把步骤记录写进 etl_log。返回本次运行的步骤记录。
 
     dwd_signal 按日期分区写（重跑幂等）；维表和汇总层整表替换。
     """
@@ -139,6 +151,10 @@ def run_day(day: str | None = None, db_path=None) -> pd.DataFrame:
         sig = locate(clean, dim_cell)
         stay = build_stay(sig, settings, districts, aois, hot)
         write_dws_stay(con, stay)
+        night = build_night(stay, day, settings)
+        write_dws_night(con, night)
+        trip = build_trip(stay, settings)
+        write_dws_trip(con, trip)
         log = pd.DataFrame(_LOG[start:]).assign(dt=day, run_id=batch)
         db.append_table(con, log, "etl_log")
     finally:
@@ -147,7 +163,7 @@ def run_day(day: str | None = None, db_path=None) -> pd.DataFrame:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="跑一天的流水线：ODS → dwd_signal、维表、dws_stay")
+    parser = argparse.ArgumentParser(description="跑一天的流水线：ODS → dwd_signal、维表、dws_stay、dws_night、dws_trip")
     parser.add_argument("--day", default=config.ANALYSIS_DAY, help="日期分区，形如 2018-10-03")
     parser.add_argument("--db", default=None, help="数据库路径，默认 MySQL signal_insight")
     args = parser.parse_args(argv)
