@@ -19,7 +19,7 @@ from matplotlib.patches import Rectangle
 from .. import config
 
 __all__ = ["MAIN", "MAIN_LIGHT", "MAIN_DARK", "MAIN_MID", "GRAY", "GRAY_DARK", "RED", "AMBER",
-           "INK", "MUTED", "FAINT", "AREA_COLOR", "SEG_COLOR", "apply_theme", "finish"]
+           "INK", "MUTED", "FAINT", "AREA_COLOR", "SEG_COLOR", "apply_theme", "finish", "watermark"]
 
 # ── 配色：灰色打底，一种颜色强调一件事，红色只表示警示 ──
 MAIN, MAIN_LIGHT, MAIN_DARK, MAIN_MID = "#1D6FA5", "#DCEAF5", "#174E73", "#7FB3D9"
@@ -90,3 +90,13 @@ def finish(fig, title: str, subtitle: str, source: str, path: str | None = None)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
     return out
+
+
+def watermark(fig, text: str = "模拟数据 · 仅用于流水线演示") -> None:
+    """模拟数据的图打上斜体水印（D12）：图会被截出来单独传，只靠副标题里一句“模拟”不够醒目。
+
+    图表规范：凡是用到模拟分区的图（notebook、报告、平台）都要打；分析报告只用真实分区，不会出现水印。
+    gid = "watermark" 让规范检查和重叠检查跳过它。
+    """
+    fig.text(0.5, 0.5, text, fontsize=34, color=RED, alpha=0.12, rotation=20,
+             ha="center", va="center", fontweight="bold", gid="watermark")
