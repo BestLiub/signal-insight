@@ -51,6 +51,9 @@ def _fake_streamlit():
 
 
 class _Fig:
+    def __init__(self, *a, **k):
+        pass
+
     def update_layout(self, **k):
         return self
 

@@ -88,6 +88,7 @@ def ods_dates(con):
 
 
 def register_arrivals(con, dates_counts=None, is_synthetic=False):
+    migrate(con)
     dates_counts = dates_counts or ods_dates(con).to_dict()
     for dt, n in dates_counts.items():
         cur = reg_get(con, dt)

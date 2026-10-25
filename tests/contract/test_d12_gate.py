@@ -13,14 +13,14 @@ def _raw(n, hour=12, invalid=0):
     rows = [{"timestamp": ms, "imsi": f"{i:018d}", "lac_id": 1, "cell_id": 1,
              "phone": "", "timestamp1": ms, "nid": 0, "npid": 0} for i in range(n)]
     for i in range(invalid):
-        rows[i]["imsi"] = "bad"
+        rows[i]["imsi"] = f"bad{i}"          # 非法，但仍是一个独立的 IMSI
     return pd.DataFrame(rows)
 
 
 def test_profile_partition_counts_rates():
     raw = _raw(100, invalid=5)
     p = gate.profile_partition(raw, {"1-1"})
-    assert p["rows"] == 100 and p["users"] == 95
+    assert p["rows"] == 100 and p["users"] == 100      # users 统计原始 IMSI 去重，不剔除格式异常
     assert p["imsi_invalid_rate"] == pytest.approx(0.05)
     assert p["cell_match_rate"] == 1.0 and p["key_null_rate"] == 0.0
 
@@ -69,8 +69,9 @@ def test_registry_transitions(tmp_path):
         assert "2018-10-03" in ingest.todo(con)
 
 
+@needs_data
 def test_ingest_same_file_twice_is_idempotent(tmp_path):
-    with sandbox(tmp_path) as src, sandbox(tmp_path / "wh") as wh:
+    with ods_copy(tmp_path) as src, sandbox(tmp_path / "wh") as wh:
         ingest.init_warehouse(src.schema, wh.schema)
         before = int(wh.execute("SELECT COUNT(*) FROM ods_signal").fetchone()[0])
         first = ingest.ingest_partition(wh, tmp_path)              # 用同一个 schema 当“上游分区”
