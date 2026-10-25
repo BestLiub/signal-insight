@@ -46,6 +46,21 @@ def build_dim_hotspot(dwd: pd.DataFrame, dim_cell: pd.DataFrame, top_n: int,
     }])
 
 
+def dim_hotspot_from_settings(settings: dict) -> pd.DataFrame:
+    """D11 起热点中心写在 settings.yaml 里：dim_hotspot 直接由配置生成，不再每天按当天数据重算。
+
+    build_dim_hotspot 还留着：它是“中心怎么算出来的”的依据（D04 的方法），只在定中心时用一次。
+    """
+    h = settings["hotspot"]
+    return pd.DataFrame([{
+        "name": h["name"],
+        "lng": float(h["lng"]),
+        "lat": float(h["lat"]),
+        "radius_m": h["radius_m"],
+        "note": f"settings.yaml（按 D04 的方法用 10-03 的数据算出，连接用户数前 {h['top_n']} 的站点加权）",
+    }])
+
+
 METRIC_COLS = ["metric", "meaning", "definition", "params", "source_table"]
 METRIC_LABELS = {"metric": "指标", "meaning": "业务含义", "definition": "计算口径", "params": "参数",
                  "source_table": "来源表", "version": "版本"}           # 给人看的表头：报告、平台、导出的口径表

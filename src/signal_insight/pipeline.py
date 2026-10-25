@@ -1,30 +1,31 @@
 """流水线：把一天的数据从 ODS 一键算到明细层、维表、汇总层，并留下运行记录。
 
-编排层（docs/工程规范.md 第 3 条）：唯一同时碰“数据库”和“计算”的地方。
-读库 → 调用 dwd / dims / dws 里的纯函数 → 写库，每一步由 @step 记下行数和耗时，最后写进 etl_log。
-业务参数一律从 config/settings.yaml 读，传给计算函数（docs/工程规范.md 第 8 条）。
+编排层（docs/工程规范.md 第 3 条）：唯一同时碰“数据库”和“计算”的地方。业务参数一律从 config/settings.yaml 读（第 8 条）。
 
-用法：
-    python -m signal_insight.pipeline --day 2018-10-03
-或在 notebook 里：
-    from signal_insight import pipeline;   pipeline.run_day()
+D11 起有两种库、两个入口（第 10 条）：
+  · 开发库 MySQL signal_insight：探索用，只放分析日（config.ANALYSIS_DAY）。run_day() 在这里跑，单日表整表替换。
+    传别的日期会直接报错——D11 的事故就是把第二天跑进了单日表，结果不报错、第一天的结论悄悄没了。
+  · 生产库 MySQL signal_warehouse：多日。run_partition() 在这里跑，所有明细和汇总表按 dt 分区写（同一个事务里先删后写）。
+    命令行 python -m signal_insight run --date … 调的就是它。
+每次运行有一个运行编号；etl_log 里记下每一步的行数、耗时、运行编号和配置版本（config.config_hash）。
 """
 import argparse
 import functools
 import time
+import uuid
 
 import pandas as pd
 
 from signal_mysql import database as mysql
 
-from . import config, db, dims, dwd, geo
-from . import dws
+from . import config, db, dims, dwd, dws, geo
 
-_LOG: list[dict] = []         # 本进程里所有步骤的记录；run_day 只取自己这一次的那一段
+DWS_TABLES = ["dws_stay", "dws_night", "dws_trip", "dws_user_day", "dws_user_hour"]
+_LOG: list[dict] = []         # 本进程里所有步骤的记录；每次运行只取自己那一段
 
 
 def _rows(x):
-    """一个步骤的"行数"：DataFrame 取行数，(DataFrame, 其他) 取第一个的行数，整数原样返回。"""
+    """一个步骤的“行数”：DataFrame 取行数，(DataFrame, 其他) 取第一个的行数，整数原样返回。"""
     if isinstance(x, tuple):
         x = x[0]
     if isinstance(x, pd.DataFrame):
@@ -33,11 +34,7 @@ def _rows(x):
 
 
 def step(func):
-    """装饰器：记录步骤名、输入行数、输出行数、耗时，不改函数本身的行为。
-
-    装饰器就是“接收一个函数、返回一个新函数”的函数：调用方的写法一个字都不用改，
-    但每一步都自动留下了运行记录。出了问题，看记录就知道是哪一步、处理了多少行、花了多久。
-    """
+    """装饰器：记录步骤名、输入行数、输出行数、耗时，不改函数本身的行为（D05）。"""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         rows_in = next((_rows(a) for a in args if isinstance(a, pd.DataFrame)), None)
@@ -50,20 +47,24 @@ def step(func):
     return wrapper
 
 
-# ── 每一步：读库的、算的、写库的分开，各自一个函数，日志里才分得清哪一步慢 ──
+def new_run_id() -> str:
+    """运行编号：时间 + 6 位随机串。同一次运行的所有步骤、所有分区共用一个。"""
+    return f"{pd.Timestamp.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+
+
+# ── 读 ──
 @step
 def extract_ods(con):
+    """开发库：整张 ods_signal（里面只有 10-01～10-03）。"""
     return mysql.read_frame("SELECT * FROM ods_signal", con)
 
 
 @step
-def clean_signal(raw, day):
-    return dwd.clean_signal(raw, day)
-
-
-@step
-def write_dwd(con, df, day):
-    return db.write_partition(con, df, "dwd_signal", day)
+def extract_day(con, day):
+    """生产库：只取北京时间 day 这一天。条件写在 timestamp 上，走 D11 建的索引；不能先读全表再筛。"""
+    start = int((pd.Timestamp(day) - pd.Timedelta(hours=config.UTC_OFFSET_HOURS)).timestamp() * 1000)
+    return mysql.read_frame("SELECT * FROM ods_signal WHERE timestamp >= ? AND timestamp < ?", con,
+                               params=(start, start + 86_400_000))
 
 
 @step
@@ -74,24 +75,15 @@ def read_polygons(con):
     return districts, aois
 
 
+# ── 算 ──
+@step
+def clean_signal(raw, day):
+    return dwd.clean_signal(raw, day)
+
+
 @step
 def build_dim_cell(con, districts, aois):
     return dims.build_dim_cell(mysql.read_frame("SELECT * FROM ods_cell", con), districts, aois)
-
-
-@step
-def build_dim_hotspot(dwd_df, dim_cell, settings):
-    return dims.build_dim_hotspot(dwd_df, dim_cell, **settings["hotspot"])
-
-
-@step
-def write_dim_cell(con, df):
-    return db.replace_table(con, df, "dim_cell")
-
-
-@step
-def write_dim_hotspot(con, df):
-    return db.replace_table(con, df, "dim_hotspot")
 
 
 def locate(dwd_df, dim_cell):
@@ -120,72 +112,112 @@ def build_user_day(sig, stay, trip, night, day, settings):
 
 
 @step
-def build_dim_metric(settings):
-    return dims.build_dim_metric(settings)
-
-
-@step
 def build_user_hour(stay, sig, day, settings, districts, aois, hot):
     return dws.build_user_hour(stay, sig, day, settings, districts, aois, hot)
 
 
-def _replace(table):
-    """生成一个“整表替换某张表”的步骤；函数名带上表名，etl_log 里才分得清是哪张表。"""
-    def write(con, df):
-        return db.replace_table(con, df, table)
+def compute_dws(clean, dim_cell, hot, day, settings, districts, aois) -> dict:
+    """汇总层的五张表：两种库算法完全一样，只是写法不同。"""
+    sig = locate(clean, dim_cell)
+    stay = build_stay(sig, settings, districts, aois, hot)
+    night = build_night(stay, day, settings)
+    trip = build_trip(stay, settings)
+    return {"dws_stay": stay, "dws_night": night, "dws_trip": trip,
+            "dws_user_day": build_user_day(sig, stay, trip, night, day, settings),
+            "dws_user_hour": build_user_hour(stay, sig, day, settings, districts, aois, hot)}
+
+
+# ── 写 ──
+@step
+def write_dwd(con, df, day):
+    return db.write_partition(con, df, "dwd_signal", day)
+
+
+def _writer(table, how):
+    """生成“写某张表”的步骤；函数名带上表名，etl_log 里才分得清是哪张表。"""
+    if how == "replace":
+        def write(con, df, day=None):
+            return db.replace_table(con, df, table)
+    else:
+        def write(con, df, day):
+            return db.write_partition(con, df, table, day)
     write.__name__ = write.__qualname__ = f"write_{table}"
     return step(write)
 
 
-# 汇总层现在都是整表替换：只有一天的数据，这样最简单。
-write_dws_stay = _replace("dws_stay")
-write_dws_night = _replace("dws_night")
-write_dws_trip = _replace("dws_trip")
-write_dws_user_day = _replace("dws_user_day")
-write_dim_metric = _replace("dim_metric")
-write_dws_user_hour = _replace("dws_user_hour")
+REPLACE = {t: _writer(t, "replace") for t in DWS_TABLES + ["dim_cell", "dim_hotspot", "dim_metric"]}
+PARTITION = {t: _writer(t, "partition") for t in DWS_TABLES}
+
+
+def _finish_log(con, start, day, run_id, settings):
+    log = pd.DataFrame(_LOG[start:]).assign(dt=day, run_id=run_id, config_version=config.config_hash(settings))
+    db.append_table(con, log, "etl_log")      # 老的 etl_log 没有“配置版本”列：append_table 会先加列
+    return log
+
+
+def refresh_dims(con, settings, polygons=None) -> None:
+    """重建维表：dim_cell（基站）、dim_hotspot（热点，来自配置）、dim_metric（口径，来自配置）。
+
+    维表不分日期：init 时建一次；改了热点或口径参数后再跑一次（命令行 python -m signal_insight dims）。
+    polygons：调用方已经读好的 (区县, 商圈) 多边形；不给就自己读一次。
+    """
+    districts, aois = polygons or read_polygons(con)
+    REPLACE["dim_cell"](con, build_dim_cell(con, districts, aois))
+    REPLACE["dim_hotspot"](con, dims.dim_hotspot_from_settings(settings))
+    REPLACE["dim_metric"](con, dims.build_dim_metric(settings))
+    mysql.ensure_index(con, "idx_dim_cell_pk", "dim_cell", ["lac_cell"], unique=True)
+
+
+def run_partition(con, settings: dict, dt: str, run_id: str | None = None) -> pd.DataFrame:
+    """生产库上跑一天：明细层和汇总层按 dt 分区写，别的日期不受影响。维表只读（init 时建好）。
+
+    返回本次运行的步骤记录（也追加进 etl_log）。
+    """
+    run_id = run_id or new_run_id()
+    start = len(_LOG)
+    raw = extract_day(con, dt)
+    clean, _ = clean_signal(raw, dt)
+    write_dwd(con, clean, dt)
+    districts, aois = read_polygons(con)
+    dim_cell = mysql.read_frame("SELECT * FROM dim_cell", con)
+    hot = mysql.read_frame("SELECT * FROM dim_hotspot", con).iloc[0]
+    for table, df in compute_dws(clean, dim_cell, hot, dt, settings, districts, aois).items():
+        PARTITION[table](con, df, dt)
+    return _finish_log(con, start, dt, run_id, settings)
 
 
 def run_day(day: str | None = None, db_path=None) -> pd.DataFrame:
-    """跑一天：读 ODS → 清洗 → 维表 → 停留 → 过夜地、出行 → 用户日特征、口径表 → 写库 → 把步骤记录写进 etl_log。返回本次运行的步骤记录。
+    """开发库上跑分析日（D05–D10 的 notebook 都在调用它）：单日表整表替换，结果与 D10 完全相同。
 
-    dwd_signal 按日期分区写（重跑幂等）；维表和汇总层整表替换。
+    D11 起只接受分析日：传别的日期直接报错，指向生产库。签名没变——改签名就得改所有调用它的 notebook（D06 的教训）。
     """
     day = day or config.ANALYSIS_DAY
+    if day != config.ANALYSIS_DAY:
+        raise ValueError(f"开发库只放分析日 {config.ANALYSIS_DAY}，不能跑 {day}：汇总表是单日表，跑第二天会把第一天整张冲掉。"
+                         f"多日请在生产库上跑：python -m signal_insight run --date {day}")
     settings = config.load_settings()
+    run_id = new_run_id()
     start = len(_LOG)
-    batch = pd.Timestamp.now().strftime("%Y%m%d-%H%M%S-%f")      # 批次号：同一次运行的几步共用一个
     con = db.connect(db_path)
     try:
         raw = extract_ods(con)
         clean, _ = clean_signal(raw, day)
         write_dwd(con, clean, day)
-        districts, aois = read_polygons(con)
-        dim_cell = build_dim_cell(con, districts, aois)
-        write_dim_cell(con, dim_cell)
-        hotspot = build_dim_hotspot(clean, dim_cell, settings)
-        write_dim_hotspot(con, hotspot)
-        hot = hotspot.iloc[0]
-        sig = locate(clean, dim_cell)
-        stay = build_stay(sig, settings, districts, aois, hot)
-        write_dws_stay(con, stay)
-        night = build_night(stay, day, settings)
-        write_dws_night(con, night)
-        trip = build_trip(stay, settings)
-        write_dws_trip(con, trip)
-        write_dws_user_day(con, build_user_day(sig, stay, trip, night, day, settings))
-        write_dim_metric(con, build_dim_metric(settings))
-        write_dws_user_hour(con, build_user_hour(stay, sig, day, settings, districts, aois, hot))
-        log = pd.DataFrame(_LOG[start:]).assign(dt=day, run_id=batch)
-        db.append_table(con, log, "etl_log")
+        districts, aois = read_polygons(con)               # 读一次，维表和汇总层共用
+        refresh_dims(con, settings, (districts, aois))
+        dim_cell = mysql.read_frame("SELECT * FROM dim_cell", con)
+        hot = mysql.read_frame("SELECT * FROM dim_hotspot", con).iloc[0]
+        for table, df in compute_dws(clean, dim_cell, hot, day, settings, districts, aois).items():
+            REPLACE[table](con, df)
+        log = _finish_log(con, start, day, run_id, settings)
     finally:
         con.close()
     return log
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="跑一天的流水线：ODS → dwd_signal、维表、dws_ 各表、dim_metric")
-    parser.add_argument("--day", default=config.ANALYSIS_DAY, help="日期分区，形如 2018-10-03")
+    parser = argparse.ArgumentParser(description="在开发库上跑分析日（多日请用 python -m signal_insight run）")
+    parser.add_argument("--day", default=config.ANALYSIS_DAY, help="只能是分析日")
     parser.add_argument("--db", default=None, help="数据库路径，默认 MySQL signal_insight")
     args = parser.parse_args(argv)
     log = run_day(args.day, args.db)
