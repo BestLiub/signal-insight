@@ -1,7 +1,7 @@
 # config/settings.yaml —— 业务参数的唯一来源（docs/工程规范.md 第 8 条）
 # 改参数改这里，不改代码；代码里不写 500 米、30 分钟这类业务数字。
 # 一律 UTF-8 保存（Windows 记事本另存为时选 UTF-8）。
-version: "2.0.0"          # D11 起用三段式版本号：参数含义变了改第一段，加参数改第二段，改数值改第三段
+version: "2.1.0"          # D11 起用三段式版本号：参数含义变了改第一段，加参数改第二段，改数值改第三段
 hotspot:                  # 热点：D04 定的，D06 起从这里读
   name: 西塔
   top_n: 5                # 连接用户数前几的站点参与加权，定热点中心（只在 D04 算中心时用）
@@ -11,6 +11,7 @@ hotspot:                  # 热点：D04 定的，D06 起从这里读
 stay:                     # 停留识别（D06）
   radius_m: 500           # 按距离切段的半径：吸收乒乓切换；300–1000 米结果差别不大（D06 敏感性分析）
   min_minutes: 30         # 停留的最短时长：结果对它敏感，必须写进口径
+  lookback_hours: 6       # 回看窗口（D12）：处理某天时带上前一天最后几小时的信令，跨午夜的停留才完整
 night:                    # 过夜地（D07）
   start_hour: 0           # 夜间时段 0:00–6:00
   end_hour: 6
@@ -24,6 +25,21 @@ visitor:                  # 傍晚访客与客群标签（D08）
   linked_aois:            # 联动商圈：宽表里每个商圈一列“当天去没去过”（列名: 商圈名）
     visit_taiyuan: 太原街商圈
     visit_zhongjie: 中街商圈
+gate:                     # 数据质量门禁（D12）：不通过的分区，下游一行都不写
+  enforce: true           # false 时只记录、不拦截（排查问题时临时用）
+  baseline_days: 7        # 基准 = 最近几个通过门禁的真实分区的中位数
+  valid_hour_ratio: 0.2   # 某小时的记录数达到基准小时均值的这个比例，才算“有效小时”
+  bootstrap:              # 还没有任何通过门禁的分区时用的基准（10-03 的实测值）
+    rows: 518443
+    rows_per_user: 91.7
+  rules:                  # 每条规则：低于 fail_below（或高于 fail_above）不通过，介于警告线之间是警告
+    - {id: G01, name: 数据量相对基准, metric: volume_ratio, fail_below: 0.5, warn_below: 0.8}
+    - {id: G02, name: 人均记录数相对基准, metric: rpu_ratio, fail_below: 0.5, warn_below: 0.8}
+    - {id: G03, name: 有效小时数, metric: valid_hours, fail_below: 20, warn_below: 24}
+    - {id: G04, name: 关键字段缺失率, metric: key_null_rate, fail_above: 0.01, warn_above: 0.001}
+    - {id: G05, name: IMSI 格式异常率, metric: imsi_invalid_rate, fail_above: 0.01, warn_above: 0.001}
+    - {id: G06, name: 完全重复率, metric: dup_rate, fail_above: 0.05, warn_above: 0.01}
+    - {id: G07, name: 基站关联率, metric: cell_match_rate, fail_below: 0.99, warn_below: 0.999}
 hourly:                   # 每人每小时一个位置（D09）
   min_cover_minutes: 30   # 停留覆盖这个小时至少这么久，才用停留的位置；否则用信令中位位置
 privacy:                  # 对外数据的隐私规则（D09，docs/工程规范.md 第 9 条）
