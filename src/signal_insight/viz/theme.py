@@ -19,7 +19,7 @@ from matplotlib.patches import Rectangle
 from .. import config
 
 __all__ = ["MAIN", "MAIN_LIGHT", "MAIN_DARK", "MAIN_MID", "GRAY", "GRAY_DARK", "RED", "AMBER",
-           "INK", "MUTED", "FAINT", "AREA_COLOR", "SEG_COLOR", "apply_theme", "finish", "watermark", "plotly_layout"]
+           "INK", "MUTED", "FAINT", "AREA_COLOR", "SEG_COLOR", "apply_theme", "finish", "watermark", "plotly_layout", "area_color", "segment_color"]
 
 # ── 配色：灰色打底，一种颜色强调一件事，红色只表示警示 ──
 MAIN, MAIN_LIGHT, MAIN_DARK, MAIN_MID = "#1D6FA5", "#DCEAF5", "#174E73", "#7FB3D9"
@@ -118,3 +118,13 @@ def plotly_layout(fig, title: str, subtitle: str = "", source: str = "", height:
         fig.add_annotation(text=source, xref="paper", yref="paper", x=0, y=-0.16, showarrow=False,
                            font=dict(size=9, color=FAINT), xanchor="left")
     return fig
+
+
+def area_color(name: str) -> str:
+    """区域在平台和报告里的固定颜色；没登记的区域用灰色（同一个区域永远同色，D04 图表规范）。"""
+    return AREA_COLOR.get(name, GRAY)
+
+
+def segment_color(name: str) -> str:
+    """客群的固定颜色；“不明”永远是灰色：不是一类人，是不知道。"""
+    return SEG_COLOR.get(name, GRAY)
