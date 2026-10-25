@@ -22,9 +22,13 @@ import pandas as pd
 
 from signal_mysql import database as mysql
 
-from . import config, db, dims, dwd, dws, gate, geo, ingest
+from . import ads, config, db, dims, dwd, dws, gate, geo, ingest
 
 DWS_TABLES = ["dws_stay", "dws_night", "dws_trip", "dws_user_day", "dws_user_hour"]
+AREA_TABLES = ["dws_stay_area", "dws_user_area_day"]                       # D13
+ADS_TABLES = ["ads_area_hourly", "ads_area_segment", "ads_area_daily", "ads_area_radius", "ads_area_origin",
+              "ads_area_linkage", "ads_hex_hourly", "ads_od_district"]     # D13：带 is_synthetic
+DQ_TABLES = ["ads_dq_partition", "ads_dq_rule", "ads_dq_clean_steps"]      # D13：质量看板、质量报告
 _LOG: list[dict] = []         # 本进程里所有步骤的记录；每次运行只取自己那一段
 
 
@@ -120,6 +124,38 @@ def build_user_hour(stay, sig, day, settings, districts, aois, hot):
     return dws.build_user_hour(stay, sig, day, settings, districts, aois, hot)
 
 
+@step
+def build_stay_area(stay, dim_area, area_polys):
+    return dws.build_stay_area(stay, dim_area, area_polys)
+
+
+@step
+def build_user_area_day(stay, stay_area, user_day, night, dim_area, day, settings):
+    return dws.build_user_area_day(stay, stay_area, user_day, night, dim_area, day, settings)
+
+
+def read_areas(con):
+    """分析区域：dim_area 和还原好的区域多边形（圆形区域没有多边形）。"""
+    dim_area = mysql.read_frame("SELECT * FROM dim_area", con)
+    return dim_area, geo.rings_from_points(mysql.read_frame("SELECT * FROM dim_area_polygon", con), "area")
+
+
+def compute_area_ads(t: dict, dim_area, area_polys, day, settings) -> dict:
+    """区域表 + 应用层：都在生成时做小样本抑制。"""
+    stay_area = build_stay_area(t["dws_stay"], dim_area, area_polys)
+    uad = build_user_area_day(t["dws_stay"], stay_area, t["dws_user_day"], t["dws_night"], dim_area, day, settings)
+    uh = t["dws_user_hour"]
+    return {"dws_stay_area": stay_area, "dws_user_area_day": uad,
+            "ads_area_hourly": ads.build_area_hourly(uh, dim_area, area_polys, settings),
+            "ads_area_segment": ads.build_area_segment(uad, settings),
+            "ads_area_daily": ads.build_area_daily(uad, dim_area, settings),
+            "ads_area_radius": ads.build_area_radius(uad, settings),
+            "ads_area_origin": ads.build_area_origin(uad, settings),
+            "ads_area_linkage": ads.build_area_linkage(t["dws_stay"], stay_area, uad, day, settings),
+            "ads_hex_hourly": ads.build_hex_hourly(uh, dim_area, settings),
+            "ads_od_district": ads.build_od_district(t["dws_trip"], settings)}
+
+
 def compute_dws(clean, dim_cell, hot, day, settings, districts, aois, lookback=None, partitioned=False) -> dict:
     """汇总层的五张表：两种库算法完全一样，只是写法不同。
 
@@ -158,8 +194,9 @@ def _writer(table, how):
     return step(write)
 
 
-REPLACE = {t: _writer(t, "replace") for t in DWS_TABLES + ["dim_cell", "dim_hotspot", "dim_metric"]}
-PARTITION = {t: _writer(t, "partition") for t in DWS_TABLES}
+REPLACE = {t: _writer(t, "replace") for t in DWS_TABLES + ["dim_cell", "dim_hotspot", "dim_metric",
+                                                             "dim_area", "dim_area_polygon"]}
+PARTITION = {t: _writer(t, "partition") for t in DWS_TABLES + AREA_TABLES + ADS_TABLES + DQ_TABLES}
 
 
 def _finish_log(con, start, day, run_id, settings):
@@ -178,6 +215,9 @@ def refresh_dims(con, settings, polygons=None) -> None:
     REPLACE["dim_cell"](con, build_dim_cell(con, districts, aois))
     REPLACE["dim_hotspot"](con, dims.dim_hotspot_from_settings(settings))
     REPLACE["dim_metric"](con, dims.build_dim_metric(settings))
+    dim_area, area_poly = dims.build_dim_area(settings, aois)
+    REPLACE["dim_area"](con, dim_area)
+    REPLACE["dim_area_polygon"](con, area_poly)
     db.ensure_indexes(con)
 
 
@@ -196,7 +236,7 @@ def quality_gate(con, raw, day, settings):
     results = gate.evaluate(profile, base, settings)
     db.write_partition(con, results, "dq_gate_result", day)
     db.write_partition(con, gate.profile_row(profile, base), "dq_partition_profile", day)
-    return results, gate.overall(results), base
+    return results, gate.overall(results), base, profile
 
 
 def _lookback(con, day, settings):
@@ -221,21 +261,30 @@ def run_partition(con, settings: dict, dt: str, run_id: str | None = None) -> st
     version = config.config_hash(settings)
     try:
         raw = extract_day(con, dt)
-        results, status, base = quality_gate(con, raw, dt, settings)
+        results, status, base, profile = quality_gate(con, raw, dt, settings)
         ingest.reg_set(con, dt, rows_ods=len(raw), gate_status=status, config_version=version, run_id=run_id)
+        synthetic = int(ingest.reg_get(con, dt)["is_synthetic"])
+        PARTITION["ads_dq_rule"](con, ads.build_dq_rule(results, synthetic), dt)
         if status == "fail" and settings["gate"]["enforce"]:
             failed = "、".join(results.loc[results["result"] == "fail", "rule_id"])
             ingest.reg_set(con, dt, pipeline_status="blocked", note=f"门禁不通过：{failed}")
+            PARTITION["ads_dq_partition"](con, ads.build_dq_partition(profile, results, base, status, "blocked", synthetic), dt)
             _finish_log(con, start, dt, run_id, settings)
             return "blocked"
-        clean, _ = clean_signal(raw, dt)
+        clean, steps = clean_signal(raw, dt)
         write_dwd(con, clean, dt)
+        PARTITION["ads_dq_clean_steps"](con, ads.build_dq_clean_steps(steps, synthetic), dt)
         districts, aois = read_polygons(con)
         dim_cell = mysql.read_frame("SELECT * FROM dim_cell", con)
         hot = mysql.read_frame("SELECT * FROM dim_hotspot", con).iloc[0]
         lookback, note = _lookback(con, dt, settings)
-        for table, df in compute_dws(clean, dim_cell, hot, dt, settings, districts, aois, lookback, partitioned=True).items():
+        t = compute_dws(clean, dim_cell, hot, dt, settings, districts, aois, lookback, partitioned=True)
+        for table, df in t.items():
             PARTITION[table](con, df, dt)
+        dim_area, area_polys = read_areas(con)
+        for table, df in compute_area_ads(t, dim_area, area_polys, dt, settings).items():
+            PARTITION[table](con, df.assign(is_synthetic=synthetic) if table.startswith("ads_") else df, dt)
+        PARTITION["ads_dq_partition"](con, ads.build_dq_partition(profile, results, base, status, "done", synthetic), dt)
     except Exception as e:
         ingest.reg_set(con, dt, pipeline_status="failed", note=f"{type(e).__name__}: {e}"[:300])
         raise
