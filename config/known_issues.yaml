@@ -1,0 +1,87 @@
+# 已知数据问题清单：数据质量报告第 6 章从这里生成。
+# D13 起建立；前十二天发现的问题补登在这里。新发现的问题追加一条，状态变了就改 status（D13 需求卡 13.11）。
+# status：已处理 / 已规避 / 已知限制（数据本身决定，不能修，只能在结论里说明）
+- id: K01
+  title: 原始文件只有 10-03 一整天
+  found: D01
+  detail: 文件名是“国庆三天”，但 10-01 只有 54 行、10-02 只有 14,331 行（正常日的 2.8%），10-03 占 97.3%
+  impact: 不能做多日对比；10-01、10-02 不参与任何分析
+  handling: D12 起质量门禁（gate.py）自动拦截：G01 数据量、G02 人均记录数、G03 有效小时数
+  status: 已处理
+- id: K02
+  title: IMSI 前 15 位不能代表一个用户
+  found: D02
+  detail: 前 15 位有 729 组对应多个手机号（15.6%），牵连 1,707 个 IMSI（30.2%）
+  impact: 按前 15 位去重会把 30% 的用户错误合并
+  handling: 用户标识用完整的 18 位 IMSI
+  status: 已处理
+- id: K03
+  title: 手机号占位值 6666
+  found: D02
+  detail: 36 行、14 个 IMSI 的手机号是占位值
+  impact: 手机号不能作为用户标识的第二证据
+  handling: 主键验证时先排除占位值
+  status: 已规避
+- id: K04
+  title: tmp0、tmp1 两列全空，npid 含义不明
+  found: D01
+  detail: 两列在全部 532,828 行中为空
+  impact: 无
+  handling: DWD 不保留这三列
+  status: 已处理
+- id: K05
+  title: 信令类型 nid 的含义是推测的
+  found: D02
+  detail: 对照表每一行都标着“推测含义”，只有部分能用数据旁证
+  impact: 不能按信令类型做业务分析（比如“通话次数”）
+  handling: 分析中不使用 nid 的业务含义
+  status: 已知限制
+- id: K06
+  title: 基站表 6 行缺坐标，34% 的站点在市外
+  found: D03
+  detail: 49,954 个扇区中 6 个缺坐标；14,106 个站点中 4,808 个在沈阳市域外，但只承载 1.8% 的信令
+  impact: 关联不上坐标的 8 条信令不参与空间分析
+  handling: dim_cell 只保留有坐标的扇区；市外站点标记为“市外”
+  status: 已处理
+- id: K07
+  title: 商圈边界有三个版本
+  found: D03
+  detail: v1 的太原街商圈只有 0.05 平方公里，不包含太原街地铁站；JSON 版是投影坐标
+  impact: 边界选错，商圈人数会差几倍
+  handling: 采用 v2，理由见 D03 的检验记录；分析区域（D13）的商圈边界也取 v2
+  status: 已处理
+- id: K08
+  title: 样本不是全市随机样本
+  found: D04
+  detail: 97% 以上的用户到过和平区，86% 到过西塔 500 米内
+  impact: 不能推算全市人口分布；结论只适用于“国庆当天到过西塔一带的这群人”
+  handling: 所有结论的口径写明样本范围；扩样仅作为选讲演示
+  status: 已知限制
+- id: K09
+  title: 信令是事件触发的，观测稀疏且不均匀
+  found: D02
+  detail: 同一用户相邻信令间隔中位 4 分钟，95 分位 48 分钟；凌晨 4 点只有 44% 的人有信令
+  impact: 停留识别要设时间阈值；出行时长偏长；夜间位置靠前后停留推断
+  handling: 停留 ≥ 30 分钟；过夜地要求与 0–6 点重叠 ≥ 60 分钟
+  status: 已规避
+- id: K10
+  title: 数据停在 23:59，停留时长被截断
+  found: D08
+  detail: 41% 的傍晚访客 23 点后仍在西塔
+  impact: 西塔停留时长只是下限，平均值会被低估
+  handling: 报告中停留时长一律写“至少”，并单列删失比例
+  status: 已知限制
+- id: K11
+  title: 客群“周边居民”在 1.5 公里边界上先取整再判断
+  found: D13
+  detail: D08 的宽表 dws_user_day 先把过夜地距离取两位小数（公里）再判断 <1.5，1,495–1,499 米的人被算成“市内来访”
+  impact: dws_user_day.segment 在边界上有少量偏差（D13 需求卡 13.2 对出具体人数）
+  handling: 客群规则收成 dws.segment_by_night 一个函数并补边界测试；对外的客群（ads_ 表）一律来自 dws_user_area_day（先判断、后取整）；dws_user_day.segment 保留 D08 口径用于对比
+  status: 已规避
+- id: K12
+  title: 10-04 起的分区是模拟数据
+  found: D11
+  detail: 真实数据只有 10-03 一天完整；10-04、10-05、10-06 由 10-03 重抽样平移生成（讲师工具 make_landing.py，固定种子）
+  impact: 模拟分区只能用来演示多日流水线、门禁和平台的日期切换，不能用于任何分析结论
+  handling: 分区登记表和 ads_ 表带 is_synthetic；图表打水印（viz.watermark）；分析报告只用真实分区
+  status: 已知限制
