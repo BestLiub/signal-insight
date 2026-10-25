@@ -7,4 +7,4 @@ viz.py 用 git mv 改名成 theme.py（内容、提交历史都在），地图�
     from signal_insight.viz import MAIN, GRAY                  照样能用
 """
 from .theme import *          # noqa: F401,F403  （theme.py 里的 __all__ 决定导出哪些名字）
-from . import maps            # noqa: F401  地图函数用 viz.maps.xxx 调用
+from . import lint, maps      # noqa: F401  地图用 viz.maps.xxx，规范检查用 viz.lint.lint_figure
