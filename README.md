@@ -55,8 +55,8 @@ python tools/export_ads.py     # 导出对外版生产库（只含 ads_ / dim_�
 ## 报告与交付
 
 ```bash
-python -m signal_insight report --kind quality                 # 数据质量评估报告.docx
-python -m signal_insight report --kind cleaning --date 2018-10-03   # 数据清洗与加工说明.docx
+python -m signal_insight report quality                        # 数据质量评估报告.docx
+python -m signal_insight report cleaning --date 2018-10-03     # 数据清洗与加工说明.docx
 python -m signal_insight pack --date 2018-10-03                # 图表包：图 + facts.json + 报告骨架
 python tools/preflight.py                                      # 交付前自查 11 项
 ```
@@ -69,8 +69,13 @@ python tools/preflight.py                                      # 交付前自查
 |---|---|---|
 | 原始层 | `ods_signal` 等 9 张（讲师发的库，只读） | — |
 | 明细层 | `dwd_signal` | `dwd.py` |
-| 维表 | `dim_cell`、`dim_hotspot`、`dim_metric` | `dims.py` |
+| 维表 | `dim_cell`、`dim_hotspot`、`dim_metric`、`dim_area`（D13） | `dims.py` |
 | 汇总层 | `dws_stay`、`dws_night`、`dws_trip`、`dws_user_day`、`dws_user_hour` | `dws/` 下同名文件 |
+| 汇总层（D13） | `dws_stay_area`、`dws_user_area_day`：区域是 `area` 列的取值 | `dws/area.py` |
+| 应用层（D13，只在生产库） | `ads_area_hourly`、`ads_area_segment`、`ads_area_daily`、`ads_area_radius`、`ads_area_origin`、`ads_area_linkage`、`ads_hex_hourly`、`ads_od_district`；数据质量 `ads_dq_partition`、`ads_dq_rule`、`ads_dq_clean_steps`。生成时已做小样本抑制和互补抑制，带 `is_synthetic` | `ads.py` |
+
+加一个分析区域（D13）：在 `config/settings.yaml` 的 `areas` 里加一项 → `python -m signal_insight dims` →
+`python -m signal_insight run --start 2018-10-03 --end 2018-10-06`。
 
 指标口径见 `docs/指标口径表.csv`（由 `config/settings.yaml` 渲染）。
 
