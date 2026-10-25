@@ -43,15 +43,25 @@ def find_segments(sig: pd.DataFrame, radius_m: float) -> pd.DataFrame:
     return seg
 
 
-def build_stay(sig: pd.DataFrame, settings: dict, districts: dict, aois: dict, hot) -> pd.DataFrame:
+def build_stay(sig: pd.DataFrame, settings: dict, districts: dict, aois: dict, hot,
+               day: str | None = None) -> pd.DataFrame:
     """停留表 dws_stay：持续不少于 stay.min_minutes 的段，补上顺序号、起止时刻、区县、商圈、到热点的距离。
 
     hot 是热点的一行（有 lng、lat），由调用方从 dim_hotspot 取。
     起止时刻精确到秒（与 D06 notebook 一致）；时长保留一位小数；主键 imsi + stay_seq。
+
+    day（D12 回看窗口）：sig 里可能带着前一天最后几小时的信令。给了 day 时：
+      · 只保留结束时刻在 day 当天或之后的停留——完全落在前一天的属于前一天的分区，不能重复写进今天；
+      · 多两列：cross_day（开始于前一天）、duration_in_day_min（落在当天的那部分时长，按天汇总时用它，
+        否则同一段停留会在两天里各算一次）。
+    不给 day 时行为与 D06 完全相同（开发库、单日）。
     """
     p = settings["stay"]
     seg = find_segments(sig, p["radius_m"])
-    stay = seg[seg["duration_min"] >= p["min_minutes"]].reset_index(drop=True)
+    keep = seg["duration_min"] >= p["min_minutes"]
+    if day is not None:
+        keep &= seg["t_end"] >= (pd.Timestamp(day) - EPOCH).total_seconds()
+    stay = seg[keep].reset_index(drop=True)
     stay["stay_seq"] = stay.groupby("imsi").cumcount() + 1
     stay["start_time"] = pd.to_datetime(stay["t_start"], unit="s").dt.floor("s")
     stay["end_time"] = pd.to_datetime(stay["t_end"], unit="s").dt.floor("s")
@@ -59,4 +69,9 @@ def build_stay(sig: pd.DataFrame, settings: dict, districts: dict, aois: dict, h
     stay["district"] = pd.Series(geo.point_in_polygons(stay["lng"], stay["lat"], districts)).fillna("市外")
     stay["aoi"] = geo.point_in_polygons(stay["lng"], stay["lat"], aois)
     stay["dist_xita_m"] = geo.haversine(stay["lat"], stay["lng"], hot["lat"], hot["lng"]).round()
-    return stay[STAY_COLS]
+    if day is None:
+        return stay[STAY_COLS]
+    d0 = (pd.Timestamp(day) - EPOCH).total_seconds()
+    stay["cross_day"] = stay["t_start"] < d0
+    stay["duration_in_day_min"] = ((stay["t_end"] - np.maximum(stay["t_start"], d0)) / 60).round(1)
+    return stay[STAY_COLS + ["cross_day", "duration_in_day_min"]]
