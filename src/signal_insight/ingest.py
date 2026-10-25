@@ -106,7 +106,18 @@ def todo(con):
 
 def ingest_partition(con, path):
     path = Path(path)
-    if path.is_file():
+    if path.is_file() and path.suffix.lower() == ".db":
+        # 讲师发的 SQLite 分区文件：直接读 ods_signal（_meta 里 synthetic=1 表示模拟分区）
+        import sqlite3
+        with sqlite3.connect(path) as s:
+            frame = pd.read_sql_query("SELECT * FROM ods_signal", s)
+            try:
+                row = s.execute("SELECT value FROM _meta WHERE key='synthetic'").fetchone()
+            except sqlite3.Error:
+                row = None
+        meta = {"is_synthetic": bool(row and str(row[0]) == "1")}
+        digest = file_sha1(path)
+    elif path.is_file():
         frame = pd.read_parquet(path)
         meta_path = path.with_suffix(".meta.json")
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}

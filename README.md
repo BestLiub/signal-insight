@@ -29,6 +29,18 @@ python -m signal_insight.pipeline --day 2018-10-03    # 一键从 ODS 生成明�
 python -m pytest                                     # 跑全部测试
 ```
 
+## 生产库与命令行
+
+开发库 `signal_insight` 只放分析日（notebook 用）；多日数据走生产库 `signal_warehouse`，由命令行写入：
+
+```bash
+python -m signal_insight init                         # 建生产库（复制 ODS）并生成维表
+python -m signal_insight ingest data/landing/x.db     # 把一个上游分区文件并进生产库
+python -m signal_insight run --date 2018-10-03        # 在生产库上跑一天（可给多个日期）
+python -m signal_insight status                       # 每个日期处理到哪一步
+python tools/check_deps.py                            # 检查模块依赖方向和循环依赖
+```
+
 ## 数据表
 
 | 层 | 表 | 生成它的代码 |
