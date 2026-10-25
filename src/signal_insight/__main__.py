@@ -45,7 +45,7 @@ def main(argv=None) -> int:
     p.add_argument("--end", help="回填的结束日期（含）")
     sub.add_parser("status", help="生产库里每天的数据和处理情况")
     p = sub.add_parser("report", help="生成 Word 报告：数据质量评估 / 数据清洗与加工说明 / 图表包")
-    p.add_argument("--kind", choices=["quality", "cleaning", "pack"], default="quality")
+    p.add_argument("kind", nargs="?", choices=["quality", "cleaning", "pack"], default="quality")
     p.add_argument("--start", help="质量报告：起始日期")
     p.add_argument("--end", help="质量报告：结束日期（含）")
     p.add_argument("--date", help="清洗报告 / 图表包：分析日")
@@ -78,12 +78,12 @@ def main(argv=None) -> int:
                 out = build_quality_report(settings, start=args.start, end=args.end)
             elif args.kind == "cleaning":
                 if not args.date:
-                    ap.error("report --kind cleaning 需要 --date")
+                    ap.error("report cleaning 需要 --date")
                 from .report.cleaning import build_cleaning_report
                 out = build_cleaning_report(settings, args.date, with_sensitivity=not args.no_sensitivity)
             else:
                 if not args.date:
-                    ap.error("report --kind pack 需要 --date")
+                    ap.error("report pack 需要 --date")
                 from .report.pack import build_figure_pack
                 out = build_figure_pack(settings, args.date)
             print("已生成：", out)
