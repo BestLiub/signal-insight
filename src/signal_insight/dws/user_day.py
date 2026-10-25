@@ -11,16 +11,28 @@ UNKNOWN, OUTSIDE_CITY, NEAR, IN_CITY, OUTSIDER = "过夜地不明", "市外来�
 OUT_OF_CITY = "市外"                                   # dim_cell、dws_stay 里落不进任何区县的标记
 
 
-def classify_segment(user_day: pd.DataFrame, settings: dict) -> pd.Series:
-    """按过夜地给人分类。**判断顺序固定**：不明 → 市外 → 周边（< visitor.near_km）→ 其余市内。
+def segment_by_night(dist_km, night_district, near_km) -> np.ndarray:
+    """客群规则本身（D08 定；D13 的区域表也用它，规则只有这一份）。**判断顺序固定**：不明 → 市外 → 周边 → 其余市内。
 
     顺序本身就是业务规则：np.select 取第一个成立的条件。先判“不明”还因为 NaN 和数字比较永远是 False——
     要是先写 dist < 1.5，识别不出过夜地的人会掉进 default，被错归成“市内来访”（讲师卡易错点）。
+    dist_km 由调用方算好传进来：**要先判断、后取整**（D13 需求卡 13.2：先取整，1.496 公里会被算成 1.50）。
     """
-    dist = user_day["night_dist_xita_km"]
-    return pd.Series(np.select([dist.isna(), user_day["night_district"] == OUT_OF_CITY,
-                                dist < settings["visitor"]["near_km"]],
-                               [UNKNOWN, OUTSIDE_CITY, NEAR], default=IN_CITY),
+    dist_km = pd.Series(dist_km).to_numpy(dtype=float)
+    return np.select([np.isnan(dist_km), pd.Series(night_district).to_numpy() == OUT_OF_CITY, dist_km < near_km],
+                     [UNKNOWN, OUTSIDE_CITY, NEAR], default=IN_CITY)
+
+
+def segment_with_inbound(by_night, inbound) -> np.ndarray:
+    """修正口径（D08 需求卡 8.4）：当天从外地进城的人、过夜地在市外的人，都算“外地来客”。"""
+    by_night = np.asarray(by_night, dtype=object)
+    return np.where(np.asarray(inbound, dtype=bool) | (by_night == OUTSIDE_CITY), OUTSIDER, by_night)
+
+
+def classify_segment(user_day: pd.DataFrame, settings: dict) -> pd.Series:
+    """按过夜地给人分类（D08 的宽表）：距离量到西塔中心。规则见 segment_by_night。"""
+    return pd.Series(segment_by_night(user_day["night_dist_xita_km"], user_day["night_district"],
+                                      settings["visitor"]["near_km"]),
                      index=user_day.index, name="segment")
 
 
@@ -82,5 +94,5 @@ def build_user_day(sig_day: pd.DataFrame, stay: pd.DataFrame, trip: pd.DataFrame
     first_district = s.groupby("imsi")["district"].first().reindex(out.index)
     in_city = s.loc[s["district"] != OUT_OF_CITY, "imsi"].unique()
     out["inbound"] = (first_district == OUT_OF_CITY).to_numpy() & out.index.isin(in_city)
-    out["segment_v2"] = np.where(out["inbound"] | (out["segment"] == OUTSIDE_CITY), OUTSIDER, out["segment"])
+    out["segment_v2"] = segment_with_inbound(out["segment"], out["inbound"])
     return out.reset_index()
