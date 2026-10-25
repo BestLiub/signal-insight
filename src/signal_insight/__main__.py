@@ -1,8 +1,10 @@
 """命令行入口：python -m signal_insight <命令>（D11）。
 
     python -m signal_insight init                 建生产库：从 signal.db 复制 ODS，生成维表
-    python -m signal_insight ingest data/landing/x.parquet   把一个上游分区文件并进生产库
+    python -m signal_insight ingest data/landing/x.db        把一个上游分区文件并进生产库
     python -m signal_insight run --date 2018-10-03           在生产库上跑一天（可以给多个日期）
+    python -m signal_insight run --todo                      跑所有待处理、待重跑、出错的日期（D12；定时任务就调它）
+    python -m signal_insight run --start 2018-10-01 --end 2018-10-06   回填一段日期（D12）
     python -m signal_insight status               看生产库里每天的数据和处理情况
     python -m signal_insight dims                 改了热点或口径参数后重建维表
 
@@ -20,17 +22,13 @@ from . import config, db, ingest, pipeline
 
 
 def status(con) -> pd.DataFrame:
-    """每个日期：ODS 有多少行、明细和停留各有多少行、最近一次是什么时候用哪版配置跑的。"""
-    out = ingest.ods_dates(con).rename("ODS 行数").to_frame()
-    for table, name in [("dwd_signal", "明细行数"), ("dws_stay", "停留数")]:
-        if db.table_exists(con, table):
-            out[name] = mysql.read_frame(
-                f"SELECT dt, COUNT(*) AS n FROM {table} GROUP BY dt", con).set_index("dt")["n"]
-    if db.table_exists(con, "etl_log"):
-        last = mysql.read_frame(
-            "SELECT dt, MAX(run_at) AS 最近运行, MAX(config_version) AS 配置版本 FROM etl_log GROUP BY 1", con)
-        out = out.join(last.set_index("dt"))
-    return out.fillna({"明细行数": 0, "停留数": 0}).reset_index().rename(columns={"index": "日期", "dt": "日期"})
+    """分区登记表（D12）：每个日期的数据量、门禁结论、流水线状态、配置版本、备注。"""
+    r = ingest.registry(con)
+    r["status"] = r["pipeline_status"].map(ingest.STATUS_ZH)
+    r["模拟"] = r["is_synthetic"].map({1: "是", 0: ""})
+    return r[["dt", "模拟", "rows_ods", "gate_status", "status", "config_version", "note"]].rename(
+        columns={"dt": "日期", "rows_ods": "ODS 行数", "gate_status": "门禁", "config_version": "配置版本",
+                 "note": "备注"}).fillna("")
 
 
 def main(argv=None) -> int:
@@ -39,8 +37,12 @@ def main(argv=None) -> int:
     sub.add_parser("init", help="建生产库（从 signal.db 复制 ODS）并生成维表")
     p = sub.add_parser("ingest", help="把一个上游分区文件并进生产库")
     p.add_argument("file")
-    p = sub.add_parser("run", help="在生产库上跑一天或几天")
-    p.add_argument("--date", nargs="+", required=True, help="一个或多个日期，形如 2018-10-03")
+    p = sub.add_parser("run", help="在生产库上跑一天、几天、一段（回填）或全部待处理的日期")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--date", nargs="+", help="一个或多个日期，形如 2018-10-03")
+    g.add_argument("--todo", action="store_true", help="所有待处理、待重跑、出错的日期")
+    g.add_argument("--start", help="回填的起始日期（配合 --end）")
+    p.add_argument("--end", help="回填的结束日期（含）")
     sub.add_parser("status", help="生产库里每天的数据和处理情况")
     sub.add_parser("dims", help="重建维表（改了热点或口径参数之后）")
     args = ap.parse_args(argv)
@@ -60,10 +62,22 @@ def main(argv=None) -> int:
             dates = ingest.ingest_partition(con, args.file)
             print("入库：" + "，".join(f"{d} {n:,} 行" for d, n in dates.items()))
         elif args.cmd == "run":
-            run_id = pipeline.new_run_id()
-            for dt in args.date:
-                log = pipeline.run_partition(con, settings, dt, run_id)
-                print(f"{dt}：{len(log)} 步，共 {log['elapsed_sec'].sum():.1f} 秒")
+            if args.date:
+                dates = args.date
+            elif args.todo:
+                dates = ingest.todo(con)
+            else:
+                if not args.end:
+                    ap.error("--start 需要配合 --end")
+                dates = [d.strftime("%Y-%m-%d") for d in pd.date_range(args.start, args.end)]
+            if not dates:
+                print("没有需要处理的日期")
+            res = pipeline.run_dates(con, settings, dates)
+            for dt, st in res.items():
+                print(f"{dt}：{ingest.STATUS_ZH.get(st, st)}")
+            if any(str(v).startswith("failed") for v in res.values()):
+                print(status(con).to_string(index=False))
+                return 1
         if args.cmd in ("init", "status", "ingest", "run"):
             print(status(con).to_string(index=False))
     return 0

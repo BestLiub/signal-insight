@@ -8,6 +8,10 @@ D11 起有两种库、两个入口（第 10 条）：
   · 生产库 MySQL signal_warehouse：多日。run_partition() 在这里跑，所有明细和汇总表按 dt 分区写（同一个事务里先删后写）。
     命令行 python -m signal_insight run --date … 调的就是它。
 每次运行有一个运行编号；etl_log 里记下每一步的行数、耗时、运行编号和配置版本（config.config_hash）。
+
+D12 起生产库的每一天先过**质量门禁**（gate）：不通过的分区登记为 blocked，下游一行都不写。
+处理某天时带上前一天最后几小时的信令（回看窗口），跨午夜的停留才完整；
+一天重跑过，第二天的回看窗口就变了，第二天登记为 stale，等下一次 run --todo 重跑。
 """
 import argparse
 import functools
@@ -18,7 +22,7 @@ import pandas as pd
 
 from signal_mysql import database as mysql
 
-from . import config, db, dims, dwd, dws, geo
+from . import config, db, dims, dwd, dws, gate, geo, ingest
 
 DWS_TABLES = ["dws_stay", "dws_night", "dws_trip", "dws_user_day", "dws_user_hour"]
 _LOG: list[dict] = []         # 本进程里所有步骤的记录；每次运行只取自己那一段
@@ -64,7 +68,7 @@ def extract_day(con, day):
     """生产库：只取北京时间 day 这一天。条件写在 timestamp 上，走 D11 建的索引；不能先读全表再筛。"""
     start = int((pd.Timestamp(day) - pd.Timedelta(hours=config.UTC_OFFSET_HOURS)).timestamp() * 1000)
     return mysql.read_frame("SELECT * FROM ods_signal WHERE timestamp >= ? AND timestamp < ?", con,
-                               params=(start, start + 86_400_000))
+                            params=(start, start + 86_400_000))
 
 
 @step
@@ -92,8 +96,8 @@ def locate(dwd_df, dim_cell):
 
 
 @step
-def build_stay(sig, settings, districts, aois, hot):
-    return dws.build_stay(sig, settings, districts, aois, hot)
+def build_stay(sig, settings, districts, aois, hot, day=None):
+    return dws.build_stay(sig, settings, districts, aois, hot, day)
 
 
 @step
@@ -116,10 +120,19 @@ def build_user_hour(stay, sig, day, settings, districts, aois, hot):
     return dws.build_user_hour(stay, sig, day, settings, districts, aois, hot)
 
 
-def compute_dws(clean, dim_cell, hot, day, settings, districts, aois) -> dict:
-    """汇总层的五张表：两种库算法完全一样，只是写法不同。"""
+def compute_dws(clean, dim_cell, hot, day, settings, districts, aois, lookback=None, partitioned=False) -> dict:
+    """汇总层的五张表：两种库算法完全一样，只是写法不同。
+
+    partitioned（生产库）：停留识别按“属于 day 这一天”处理，多出 cross_day、duration_in_day_min 两列——
+    不管这一天有没有回看，表结构都一样（第一天建的表就有这两列）。
+    lookback：前一天最后几小时的明细（前一天已完成时才有），只参与停留识别。
+    """
     sig = locate(clean, dim_cell)
-    stay = build_stay(sig, settings, districts, aois, hot)
+    if not partitioned:
+        stay = build_stay(sig, settings, districts, aois, hot)
+    else:
+        sig_stay = sig if lookback is None else pd.concat([locate(lookback, dim_cell), sig], ignore_index=True)
+        stay = build_stay(sig_stay, settings, districts, aois, hot, day)
     night = build_night(stay, day, settings)
     trip = build_trip(stay, settings)
     return {"dws_stay": stay, "dws_night": night, "dws_trip": trip,
@@ -165,25 +178,86 @@ def refresh_dims(con, settings, polygons=None) -> None:
     REPLACE["dim_cell"](con, build_dim_cell(con, districts, aois))
     REPLACE["dim_hotspot"](con, dims.dim_hotspot_from_settings(settings))
     REPLACE["dim_metric"](con, dims.build_dim_metric(settings))
-    mysql.ensure_index(con, "idx_dim_cell_pk", "dim_cell", ["lac_cell"], unique=True)
+    db.ensure_indexes(con)
 
 
-def run_partition(con, settings: dict, dt: str, run_id: str | None = None) -> pd.DataFrame:
-    """生产库上跑一天：明细层和汇总层按 dt 分区写，别的日期不受影响。维表只读（init 时建好）。
+@step
+def quality_gate(con, raw, day, settings):
+    """门禁：画像 → 和基准比 → 逐条规则判断。画像和规则结果按 dt 写进 dq_partition_profile、dq_gate_result。"""
+    cell_keys = set(mysql.read_frame("SELECT lac_cell FROM dim_cell", con)["lac_cell"])
+    history = pd.DataFrame(columns=["rows", "rows_per_user"])
+    if db.table_exists(con, "dq_partition_profile"):
+        history = mysql.read_frame(
+            "SELECT p.rows, p.rows_per_user FROM dq_partition_profile p JOIN partition_registry r ON r.dt = p.dt "
+            "WHERE r.gate_status IN ('pass','warn') AND r.is_synthetic = 0 AND p.dt <> ? ORDER BY p.dt DESC",
+            con, params=(day,))
+    base = gate.baseline(history, settings)
+    profile = gate.profile_partition(raw, cell_keys)
+    results = gate.evaluate(profile, base, settings)
+    db.write_partition(con, results, "dq_gate_result", day)
+    db.write_partition(con, gate.profile_row(profile, base), "dq_partition_profile", day)
+    return results, gate.overall(results), base
 
-    返回本次运行的步骤记录（也追加进 etl_log）。
+
+def _lookback(con, day, settings):
+    """前一天已完成（或待重跑）时，取它最后 stay.lookback_hours 小时的明细；否则不回看。"""
+    prev = (pd.Timestamp(day) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    reg = ingest.reg_get(con, prev)
+    if reg is None or reg["pipeline_status"] not in ("done", "stale"):
+        return None, f"无回看（{prev} 未处理或被阻断）"
+    since = pd.Timestamp(day) - pd.Timedelta(hours=settings["stay"]["lookback_hours"])
+    lb = mysql.read_frame("SELECT * FROM dwd_signal WHERE dt = ? AND ts >= ?", con,
+                          params=(prev, since.strftime(db.TS_FORMAT)[:-3]), parse_dates=["ts"])
+    return lb.drop(columns="dt"), f"回看 {prev}：{len(lb):,} 条"
+
+
+def run_partition(con, settings: dict, dt: str, run_id: str | None = None) -> str:
+    """生产库上跑一天，返回这个分区的最终状态：done/blocked。出错时登记为 failed 并抛出异常。
+
+    门禁不通过（且 gate.enforce 为真）：登记 blocked，下游一行都不写——这一天的旧结果（如果有）原样保留。
     """
     run_id = run_id or new_run_id()
     start = len(_LOG)
-    raw = extract_day(con, dt)
-    clean, _ = clean_signal(raw, dt)
-    write_dwd(con, clean, dt)
-    districts, aois = read_polygons(con)
-    dim_cell = mysql.read_frame("SELECT * FROM dim_cell", con)
-    hot = mysql.read_frame("SELECT * FROM dim_hotspot", con).iloc[0]
-    for table, df in compute_dws(clean, dim_cell, hot, dt, settings, districts, aois).items():
-        PARTITION[table](con, df, dt)
-    return _finish_log(con, start, dt, run_id, settings)
+    version = config.config_hash(settings)
+    try:
+        raw = extract_day(con, dt)
+        results, status, base = quality_gate(con, raw, dt, settings)
+        ingest.reg_set(con, dt, rows_ods=len(raw), gate_status=status, config_version=version, run_id=run_id)
+        if status == "fail" and settings["gate"]["enforce"]:
+            failed = "、".join(results.loc[results["result"] == "fail", "rule_id"])
+            ingest.reg_set(con, dt, pipeline_status="blocked", note=f"门禁不通过：{failed}")
+            _finish_log(con, start, dt, run_id, settings)
+            return "blocked"
+        clean, _ = clean_signal(raw, dt)
+        write_dwd(con, clean, dt)
+        districts, aois = read_polygons(con)
+        dim_cell = mysql.read_frame("SELECT * FROM dim_cell", con)
+        hot = mysql.read_frame("SELECT * FROM dim_hotspot", con).iloc[0]
+        lookback, note = _lookback(con, dt, settings)
+        for table, df in compute_dws(clean, dim_cell, hot, dt, settings, districts, aois, lookback, partitioned=True).items():
+            PARTITION[table](con, df, dt)
+    except Exception as e:
+        ingest.reg_set(con, dt, pipeline_status="failed", note=f"{type(e).__name__}: {e}"[:300])
+        raise
+    ingest.reg_set(con, dt, pipeline_status="done", note=note)
+    nxt = (pd.Timestamp(dt) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    nreg = ingest.reg_get(con, nxt)
+    if nreg is not None and nreg["pipeline_status"] == "done":
+        ingest.reg_set(con, nxt, pipeline_status="stale", note=f"前一天 {dt} 重跑过，回看窗口可能变了")
+    _finish_log(con, start, dt, run_id, settings)
+    return "done"
+
+
+def run_dates(con, settings: dict, dates) -> dict:
+    """按日期顺序逐天运行（回看窗口要求先跑前一天）。某天出错不影响其他天，最后汇总。"""
+    run_id = new_run_id()
+    out = {}
+    for dt in sorted(dates):
+        try:
+            out[dt] = run_partition(con, settings, dt, run_id)
+        except Exception as e:
+            out[dt] = f"failed：{type(e).__name__}: {e}"
+    return out
 
 
 def run_day(day: str | None = None, db_path=None) -> pd.DataFrame:
