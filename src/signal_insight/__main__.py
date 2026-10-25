@@ -44,6 +44,12 @@ def main(argv=None) -> int:
     g.add_argument("--start", help="回填的起始日期（配合 --end）")
     p.add_argument("--end", help="回填的结束日期（含）")
     sub.add_parser("status", help="生产库里每天的数据和处理情况")
+    p = sub.add_parser("report", help="生成 Word 报告：数据质量评估 / 数据清洗与加工说明 / 图表包")
+    p.add_argument("--kind", choices=["quality", "cleaning", "pack"], default="quality")
+    p.add_argument("--start", help="质量报告：起始日期")
+    p.add_argument("--end", help="质量报告：结束日期（含）")
+    p.add_argument("--date", help="清洗报告 / 图表包：分析日")
+    p.add_argument("--no-sensitivity", action="store_true", help="清洗报告：不跑敏感性分析")
     sub.add_parser("dims", help="重建维表（改了热点或口径参数之后）")
     args = ap.parse_args(argv)
 
@@ -61,6 +67,21 @@ def main(argv=None) -> int:
         elif args.cmd == "ingest":
             dates = ingest.ingest_partition(con, args.file)
             print("入库：" + "，".join(f"{d} {n:,} 行" for d, n in dates.items()))
+        elif args.cmd == "report":
+            if args.kind == "quality":
+                from .report.quality import build_quality_report
+                out = build_quality_report(settings, start=args.start, end=args.end)
+            elif args.kind == "cleaning":
+                if not args.date:
+                    ap.error("report --kind cleaning 需要 --date")
+                from .report.cleaning import build_cleaning_report
+                out = build_cleaning_report(settings, args.date, with_sensitivity=not args.no_sensitivity)
+            else:
+                if not args.date:
+                    ap.error("report --kind pack 需要 --date")
+                from .report.pack import build_figure_pack
+                out = build_figure_pack(settings, args.date)
+            print("已生成：", out)
         elif args.cmd == "run":
             if args.date:
                 dates = args.date

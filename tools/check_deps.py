@@ -19,7 +19,7 @@ LAYERS = {
     "config": 0,
     "db": 1, "geo": 1, "quality": 1, "privacy": 1, "viz": 1,
     "dwd": 2, "dims": 2, "dws": 2,
-    "ads": 3, "gate": 3, "ingest": 3,
+    "ads": 3, "gate": 3, "ingest": 3, "report": 3,
     "pipeline": 4,
     "__main__": 5,
 }
