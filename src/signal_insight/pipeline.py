@@ -195,7 +195,7 @@ def _writer(table, how):
 
 
 REPLACE = {t: _writer(t, "replace") for t in DWS_TABLES + ["dim_cell", "dim_hotspot", "dim_metric",
-                                                             "dim_area", "dim_area_polygon"]}
+                                                             "dim_area", "dim_area_polygon", "dim_district_boundary"]}
 PARTITION = {t: _writer(t, "partition") for t in DWS_TABLES + AREA_TABLES + ADS_TABLES + DQ_TABLES}
 
 
@@ -215,6 +215,7 @@ def refresh_dims(con, settings, polygons=None) -> None:
     REPLACE["dim_cell"](con, build_dim_cell(con, districts, aois))
     REPLACE["dim_hotspot"](con, dims.dim_hotspot_from_settings(settings))
     REPLACE["dim_metric"](con, dims.build_dim_metric(settings))
+    REPLACE["dim_district_boundary"](con, mysql.read_frame("SELECT * FROM ods_district_boundary", con))
     dim_area, area_poly = dims.build_dim_area(settings, aois)
     REPLACE["dim_area"](con, dim_area)
     REPLACE["dim_area_polygon"](con, area_poly)
