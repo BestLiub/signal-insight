@@ -112,3 +112,34 @@ metrics:
     definition: 傍晚访客中，当天在该商圈有停留的人的占比
     params: 商圈边界用 v2
     source_table: dws_user_day
+  # ── D13：分析区域推广后的口径（区域是 area 列的一个取值，加区域不用加口径）──
+  - metric: 区域停留
+    meaning: 停留发生在某个分析区域内
+    definition: 圆形区域看停留质心到圆心的距离 ≤ 半径；多边形区域看质心是否落在边界内；区域可以重叠
+    params: 区域定义见 settings.yaml 的 areas
+    source_table: dws_stay_area
+  - metric: 区域傍晚访客
+    meaning: 当天傍晚后在该区域待过的人
+    definition: "有该区域停留，且该停留结束时刻 ≥ {visitor.evening_hour}:00"
+    params: "{visitor.evening_hour}:00"
+    source_table: dws_user_area_day
+  - metric: 区域停留时长
+    meaning: 当天在该区域待了多久
+    definition: 当天该区域所有停留时长之和
+    params: "{visitor.late_hour} 点后仍在者为删失，只是下限"
+    source_table: dws_user_area_day
+  - metric: 区域客群
+    meaning: 是哪类人（相对某个区域）
+    definition: "同客群标签（修正），只是距离量到该区域的中心：{visitor.near_km} 公里内为周边居民；先判断、后取整"
+    params: "{visitor.near_km} 公里"
+    source_table: dws_user_area_day
+  - metric: 每小时在场人数
+    meaning: 某小时有多少人在该区域
+    definition: "每人每小时一个位置（覆盖该小时 ≥ {hourly.min_cover_minutes} 分钟的停留优先，否则取信令中位位置）"
+    params: "少于 {privacy.min_cell_users} 人抑制"
+    source_table: ads_area_hourly
+  - metric: 小样本抑制
+    meaning: 对外数据里看不出个人
+    definition: 少于门槛的格子连同由它算出的占比一起置空并标记；同一组只藏了一格时，再藏组内最小的一格（互补抑制）
+    params: "{privacy.min_cell_users} 人"
+    source_table: ads_各表

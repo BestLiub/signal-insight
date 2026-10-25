@@ -40,5 +40,5 @@ def test_pipeline_reconciles_all_tables(tmp_path):
              for t in ["dws_stay", "dws_night", "dws_trip", "dws_user_day", "dws_user_hour", "dim_metric"]}
         evening = con.execute("SELECT COUNT(*) FROM dws_user_day WHERE is_evening_visitor").fetchone()[0]
     assert n == {"dws_stay": 19_015, "dws_night": 3_607, "dws_trip": 11_055, "dws_user_day": 5_644,
-                 "dws_user_hour": 102_859, "dim_metric": 9}
+                 "dws_user_hour": 102_859, "dim_metric": len(config.load_settings()["metrics"])}
     assert evening == 3_310
