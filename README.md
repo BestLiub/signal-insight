@@ -52,6 +52,17 @@ python tools/export_ads.py     # 导出对外版生产库（只含 ads_ / dim_�
 
 平台只读聚合表；每页的取数和图都在 `app/lib/` 下，7 页文件在 `app/pages/`。
 
+## 报告与交付
+
+```bash
+python -m signal_insight report --kind quality                 # 数据质量评估报告.docx
+python -m signal_insight report --kind cleaning --date 2018-10-03   # 数据清洗与加工说明.docx
+python -m signal_insight pack --date 2018-10-03                # 图表包：图 + facts.json + 报告骨架
+python tools/preflight.py                                      # 交付前自查 11 项
+```
+
+报告用 `python-docx` 生成（`reports/` 不进 Git）；图表包和报告里的数字都登记了来源。
+
 ## 数据表
 
 | 层 | 表 | 生成它的代码 |
