@@ -50,6 +50,8 @@ def main(argv=None) -> int:
     p.add_argument("--end", help="质量报告：结束日期（含）")
     p.add_argument("--date", help="清洗报告 / 图表包：分析日")
     p.add_argument("--no-sensitivity", action="store_true", help="清洗报告：不跑敏感性分析")
+    p = sub.add_parser("pack", help="图表包：某一天的图、关键数字、报告骨架（D15）")
+    p.add_argument("--date", default=config.ANALYSIS_DAY)
     sub.add_parser("dims", help="重建维表（改了热点或口径参数之后）")
     args = ap.parse_args(argv)
 
@@ -61,7 +63,10 @@ def main(argv=None) -> int:
         print("还没有生产库：先运行 python -m signal_insight init", file=sys.stderr)
         return 1
     with closing(db.connect(config.WAREHOUSE_SCHEMA)) as con:
-        if args.cmd in ("init", "dims"):
+        if args.cmd == "pack":
+            from .report.pack import build_figure_pack
+            print("已生成：", build_figure_pack(settings, args.date))
+        elif args.cmd in ("init", "dims"):
             pipeline.refresh_dims(con, settings)
             print("维表已生成：dim_cell、dim_hotspot、dim_metric")
         elif args.cmd == "ingest":
