@@ -43,6 +43,15 @@ python -m signal_insight status                       # 每个日期处理到哪
 python tools/check_deps.py                            # 检查模块依赖方向和循环依赖
 ```
 
+## 展示平台
+
+```bash
+streamlit run app/Home.py      # 7 页平台：总览、节律、客源、联动、空间、质量、口径
+python tools/export_ads.py     # 导出对外版生产库（只含 ads_ / dim_）
+```
+
+平台只读聚合表；每页的取数和图都在 `app/lib/` 下，7 页文件在 `app/pages/`。
+
 ## 数据表
 
 | 层 | 表 | 生成它的代码 |
