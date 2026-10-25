@@ -19,7 +19,7 @@ from matplotlib.patches import Rectangle
 from .. import config
 
 __all__ = ["MAIN", "MAIN_LIGHT", "MAIN_DARK", "MAIN_MID", "GRAY", "GRAY_DARK", "RED", "AMBER",
-           "INK", "MUTED", "FAINT", "AREA_COLOR", "SEG_COLOR", "apply_theme", "finish", "watermark"]
+           "INK", "MUTED", "FAINT", "AREA_COLOR", "SEG_COLOR", "apply_theme", "finish", "watermark", "plotly_layout"]
 
 # ── 配色：灰色打底，一种颜色强调一件事，红色只表示警示 ──
 MAIN, MAIN_LIGHT, MAIN_DARK, MAIN_MID = "#1D6FA5", "#DCEAF5", "#174E73", "#7FB3D9"
@@ -100,3 +100,21 @@ def watermark(fig, text: str = "模拟数据 · 仅用于流水线演示") -> No
     """
     fig.text(0.5, 0.5, text, fontsize=34, color=RED, alpha=0.12, rotation=20,
              ha="center", va="center", fontweight="bold", gid="watermark")
+
+
+def plotly_layout(fig, title: str, subtitle: str = "", source: str = "", height: int | None = None):
+    """平台图表主题（D14）：和报告的图同一套字体、颜色、标题规则；不 import plotly（可选依赖）。"""
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=16, color=INK), x=0.01),
+        template="plotly_white",
+        font=dict(family="Noto Sans SC, Source Han Sans SC, Microsoft YaHei, sans-serif", size=13, color=INK),
+        margin=dict(l=12, r=12, t=54, b=46),
+        height=height,
+        annotations=[dict(text=subtitle, xref="paper", yref="paper", x=0, y=1.02, showarrow=False,
+                          font=dict(size=11, color=MUTED), xanchor="left")] if subtitle else [],
+        hoverlabel=dict(font_size=12),
+    )
+    if source:
+        fig.add_annotation(text=source, xref="paper", yref="paper", x=0, y=-0.16, showarrow=False,
+                           font=dict(size=9, color=FAINT), xanchor="left")
+    return fig
