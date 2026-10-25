@@ -8,6 +8,8 @@ import pandas as pd
 from . import config
 
 ORIG_COLS = ["timestamp", "imsi", "lac_id", "cell_id", "phone", "timestamp1", "nid", "npid"]   # 判重复用的原始字段
+KEY_FIELDS = ["imsi", "lac_id", "cell_id"]   # 缺一个就删（D02）；门禁也用这一份
+IMSI_PATTERN = r"\d{18}"                     # 合法 IMSI：完整 18 位数字（D02 需求卡 2.2、2.5）
 DWD_COLS = ["imsi", "ts", "dt", "lac_id", "cell_id", "nid", "lac_cell"]
 
 
@@ -29,8 +31,8 @@ def clean_signal(raw: pd.DataFrame, day: str) -> tuple[pd.DataFrame, list[dict]]
         steps.append({"step": name, "rows_removed": before - after, "rows_after": after})
 
     df = raw.drop(columns=["tmp0", "tmp1"])
-    n = len(df); df = df.dropna(subset=["imsi", "lac_id", "cell_id"]);   log("缺 imsi / lac / cell", n, len(df))
-    n = len(df); df = df[df["imsi"].str.fullmatch(r"\d{18}")];           log("IMSI 格式异常", n, len(df))
+    n = len(df); df = df.dropna(subset=KEY_FIELDS);   log("缺 imsi / lac / cell", n, len(df))
+    n = len(df); df = df[df["imsi"].str.fullmatch(IMSI_PATTERN)];           log("IMSI 格式异常", n, len(df))
     n = len(df); df = df.drop_duplicates(subset=ORIG_COLS);               log("完全重复", n, len(df))
     ts = to_local(df["timestamp"])
     # n = len(df); keep = ts.dt.strftime("%Y-%m-%d") == day
