@@ -6,5 +6,6 @@ docs/工程规范.md 第 5 条：这一层的表超过 3 张、或文件超过�
 from .stay import STAY_COLS, build_stay, find_segments
 from .night import NIGHT_COLS, build_night
 from .trip import TRIP_COLS, build_trip
-from .user_day import build_user_day, classify_segment
+from .user_day import build_user_day, classify_segment, segment_by_night, segment_with_inbound
+from .area import STAY_AREA_COLS, build_stay_area, build_user_area_day   # D13：区域是长表的一个取值
 from .user_hour import build_user_hour

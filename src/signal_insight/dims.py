@@ -89,3 +89,40 @@ def build_dim_metric(settings: dict) -> pd.DataFrame:
     out = pd.DataFrame(rows, columns=METRIC_COLS)
     out["version"] = f"v{settings['version']}"
     return out
+
+
+AREA_COLS = ["area", "kind", "center_lng", "center_lat", "radius_m", "source", "note"]
+
+
+def build_dim_area(settings: dict, aois: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """分析区域维表（D13）：按 settings["areas"] 生成，返回 (dim_area, dim_area_polygon)。
+
+    加一个区域 = 在配置里加一项，下游的表、报告、平台自动出现，代码一行不改。三种写法：
+      · kind: hotspot —— 圆形，圆心和半径取 settings["hotspot"]：西塔的坐标只写一处；
+      · kind: circle  —— 圆形，配置里给 lng、lat、radius_m；
+      · kind: polygon —— 边界取自 aois（D03 选定的 ods_aoi_v2，由调用方还原好传进来），中心用面积质心。
+    """
+    rows, verts = [], []
+    for a in settings["areas"]:
+        name, kind = a["name"], a["kind"]
+        if kind == "hotspot":
+            h = settings["hotspot"]
+            rows.append({"area": name, "kind": "circle", "center_lng": float(h["lng"]), "center_lat": float(h["lat"]),
+                         "radius_m": h["radius_m"], "source": "settings.hotspot", "note": a.get("note", "")})
+        elif kind == "circle":
+            rows.append({"area": name, "kind": "circle", "center_lng": float(a["lng"]), "center_lat": float(a["lat"]),
+                         "radius_m": a["radius_m"], "source": "settings.areas", "note": a.get("note", "")})
+        elif kind == "polygon":
+            if name not in aois:
+                raise ValueError(f"配置里的区域“{name}”在商圈边界（ods_aoi_v2）里找不到")
+            rings = aois[name]
+            c_lng, c_lat = geo.polygon_centroid(max(rings, key=len))   # 有多个环时用顶点最多的外环定中心
+            rows.append({"area": name, "kind": "polygon", "center_lng": c_lng, "center_lat": c_lat,
+                         "radius_m": None, "source": "ods_aoi_v2", "note": a.get("note", "")})
+            for r, ring in enumerate(rings):
+                verts.append(pd.DataFrame({"area": name, "ring": r, "seq": range(len(ring)),
+                                           "lng": ring[:, 0], "lat": ring[:, 1]}))
+        else:
+            raise ValueError(f"区域类型只能是 hotspot、circle、polygon：{a}")
+    poly = pd.concat(verts, ignore_index=True) if verts else pd.DataFrame(columns=["area", "ring", "seq", "lng", "lat"])
+    return pd.DataFrame(rows, columns=AREA_COLS), poly

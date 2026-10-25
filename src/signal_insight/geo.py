@@ -68,3 +68,82 @@ def ring_area_km2(ring: np.ndarray) -> float:
     x, y = ring[:, 0], ring[:, 1]
     kx, ky = 111.32 * np.cos(np.radians(y.mean())), 110.57    # 每度经度、每度纬度约多少公里
     return float(abs(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)) / 2 * kx * ky)
+
+
+# ── D13：分析区域与六边形网格 ─────────────────────────────────────────
+
+def polygon_centroid(ring: np.ndarray) -> tuple[float, float]:
+    """多边形的面积质心 (lng, lat)，鞋带公式。商圈的“中心”用它，不用顶点平均值。
+
+    顶点是人画的：哪边拐弯多哪边顶点就密，顶点平均值会被拽向那一侧。这个中心要参与距离计算
+    （客群的“周边居民”就是量到它），所以不能马虎。
+    """
+    x, y = ring[:, 0], ring[:, 1]
+    x1, y1 = np.roll(x, -1), np.roll(y, -1)
+    cross = x * y1 - x1 * y
+    area = cross.sum() / 2
+    if abs(area) < 1e-15:
+        return float(x.mean()), float(y.mean())
+    return float(((x + x1) * cross).sum() / (6 * area)), float(((y + y1) * cross).sum() / (6 * area))
+
+
+def area_membership(lng, lat, dim_area: pd.DataFrame, area_polys: dict) -> pd.DataFrame:
+    """点 × 区域的归属（长表）：一个点可以同时属于好几个区域。
+
+    返回列 idx（输入点的位置）、area、dist_center_m（点到区域中心，米，取整）。
+    圆形区域看到中心的距离 ≤ 半径；多边形区域看点是否落在边界里（area_polys[区域名]）。
+    区域可以重叠，所以不能用 point_in_polygons 那种“先到先得”。
+    """
+    lng, lat = np.asarray(lng, dtype=float), np.asarray(lat, dtype=float)
+    parts = []
+    for a in dim_area.itertuples(index=False):
+        d = haversine(lat, lng, a.center_lat, a.center_lng)
+        if a.kind == "circle":
+            inside = d <= a.radius_m
+        else:
+            inside = point_in_polygons(lng, lat, {a.area: area_polys[a.area]}) == a.area
+        idx = np.flatnonzero(inside)
+        parts.append(pd.DataFrame({"idx": idx, "area": a.area, "dist_center_m": d[idx].round()}))
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["idx", "area", "dist_center_m"])
+
+
+def _kxy(lat0: float) -> tuple[float, float]:
+    """在纬度 lat0 附近，每度经度、每度纬度约多少米：六边形网格用的局部平面换算。"""
+    return 111_320 * math.cos(math.radians(lat0)), 110_574
+
+
+def hex_bin(lng, lat, lng0, lat0, size_m):
+    """点 → 所在六边形的轴坐标 (q, r)。网格原点在 (lng0, lat0)，size_m 是六边形边长（米）。
+
+    为什么用六边形：每个格子到 6 个邻居的距离相等，热力图不会像方格那样出现横竖条纹。
+    """
+    kx, ky = _kxy(lat0)
+    x = (np.asarray(lng, dtype=float) - lng0) * kx
+    y = (np.asarray(lat, dtype=float) - lat0) * ky
+    qf = (math.sqrt(3) / 3 * x - y / 3) / size_m
+    rf = (2 / 3 * y) / size_m
+    sf = -qf - rf
+    q, r, s = np.round(qf), np.round(rf), np.round(sf)      # 立方坐标取整，再修正误差最大的那一维
+    dq, dr, ds = np.abs(q - qf), np.abs(r - rf), np.abs(s - sf)
+    fix_q = (dq > dr) & (dq > ds)
+    fix_r = ~fix_q & (dr > ds)
+    q = np.where(fix_q, -r - s, q)
+    r = np.where(fix_r, -q - s, r)
+    return q.astype(int), r.astype(int)
+
+
+def hex_center(q, r, lng0, lat0, size_m):
+    """六边形 (q, r) 的中心经纬度。"""
+    kx, ky = _kxy(lat0)
+    q, r = np.asarray(q, dtype=float), np.asarray(r, dtype=float)
+    x = size_m * math.sqrt(3) * (q + r / 2)
+    y = size_m * 1.5 * r
+    return lng0 + x / kx, lat0 + y / ky
+
+
+def hex_polygon(q, r, lng0, lat0, size_m) -> np.ndarray:
+    """一个六边形的 6 个顶点 (lng, lat)，画图用。"""
+    kx, ky = _kxy(lat0)
+    cx, cy = hex_center(q, r, lng0, lat0, size_m)
+    ang = np.radians(np.arange(6) * 60 + 30)
+    return np.column_stack([cx + size_m * np.cos(ang) / kx, cy + size_m * np.sin(ang) / ky])

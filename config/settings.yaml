@@ -1,7 +1,7 @@
 # config/settings.yaml —— 业务参数的唯一来源（docs/工程规范.md 第 8 条）
 # 改参数改这里，不改代码；代码里不写 500 米、30 分钟这类业务数字。
 # 一律 UTF-8 保存（Windows 记事本另存为时选 UTF-8）。
-version: "2.1.0"          # D11 起用三段式版本号：参数含义变了改第一段，加参数改第二段，改数值改第三段
+version: "2.2.0"          # D11 起用三段式版本号：参数含义变了改第一段，加参数改第二段，改数值改第三段
 hotspot:                  # 热点：D04 定的，D06 起从这里读
   name: 西塔
   top_n: 5                # 连接用户数前几的站点参与加权，定热点中心（只在 D04 算中心时用）
@@ -44,6 +44,26 @@ hourly:                   # 每人每小时一个位置（D09）
   min_cover_minutes: 30   # 停留覆盖这个小时至少这么久，才用停留的位置；否则用信令中位位置
 privacy:                  # 对外数据的隐私规则（D09，docs/工程规范.md 第 9 条）
   min_cell_users: 5       # 少于这么多人的格子不对外展示（小样本抑制）
+areas:                    # 分析区域（D13）：加一个区域 = 在这里加一项，下游的表、报告、平台自动出现，不改代码
+  - name: 西塔
+    kind: hotspot         # 圆形：圆心和半径取上面的 hotspot 一段——西塔的坐标只写在一个地方
+  - name: 太原街商圈
+    kind: polygon         # 多边形：边界取自 ods_aoi_v2（D03 选定的 v2），中心用面积质心
+  - name: 中街商圈
+    kind: polygon
+  - name: 沈阳北站
+    kind: polygon
+  - name: 沈阳世博园
+    kind: polygon
+  - name: 棋盘山风景区
+    kind: polygon
+ads:                      # 应用层（D13）
+  focus_area: 西塔        # 平台首页和报告默认看的区域
+  radius_bands_km: [1.5, 3, 5, 10, 20]   # 辐射圈层的分界（公里）
+  hex:                    # 六边形热力
+    origin_area: 西塔     # 网格原点
+    size_m: 550           # 六边形边长（米）
+    max_km: 18            # 只统计原点周围这么远以内的格子
 # 指标口径表 dim_metric 的文字模板（D08，docs/工程规范.md 第 9 条）。
 # {a.b} 会被换成上面对应的参数：参数一改，口径表跟着变，永远不会和代码脱节。
 metrics:
