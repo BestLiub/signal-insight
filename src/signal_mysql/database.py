@@ -136,15 +136,18 @@ def frame_types(df):
 def write_frame(df, name, con, if_exists='fail', index=True, **kwargs):
     """极速优化版：绕过 SQLAlchemy 语法树开销，直走底层 PyMySQL 批量网络包通道"""
     ident(name)
+    exists = table_exists(con, name)
+    # 表不存在时不能传 replace：pandas 会直接 DROP TABLE（没有 IF EXISTS），MySQL 报 1051。
+    mode = 'append' if if_exists == 'replace' and not exists else if_exists
     if len(df) == 0:
         kwargs.setdefault('dtype', frame_types(df))
-        return df.to_sql(name, con.sa, if_exists=if_exists, index=index, **kwargs)
+        return df.to_sql(name, con.sa, if_exists=mode, index=index, **kwargs)
 
     # 1. 结构初始化：若表不存在或为 replace，通过 head(0) 毫秒级建表
-    if if_exists == 'replace' or not table_exists(con, name):
-        df.head(0).to_sql(name, con.sa, if_exists=if_exists, index=False, dtype=frame_types(df))
+    if if_exists == 'replace' or not exists:
+        df.head(0).to_sql(name, con.sa, if_exists=mode, index=False, dtype=frame_types(df))
         con.commit()
-    elif if_exists == 'fail' and table_exists(con, name):
+    elif if_exists == 'fail' and exists:
         raise ValueError(f"Table '{name}' already exists.")
 
     # 2. 构造原生批量插入 SQL
