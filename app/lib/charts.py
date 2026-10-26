@@ -1,4 +1,5 @@
 """Plotly 图：和报告同源（颜色、标题规则一致）。"""
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -38,17 +39,26 @@ def bar_linkage(df):
 
 
 def hex_scatter(df, hour):
-    d = df[df["hour"] == hour]
+    d = df[df["hour"] == hour].copy()
     # plotly 6 起 scatter_mapbox 换成 MapLibre 的 scatter_map（mapbox_style → map_style）
     # center 必须显式给：不给时 MapLibre 停在西经 0°、北纬 0°，zoom 11 下点全在屏幕外
     center = ({"lon": float(d["center_lng"].mean()), "lat": float(d["center_lat"].mean())}
               if len(d) else {"lon": 123.41, "lat": 41.81})
-    fig = px.scatter_map(d, lat="center_lat", lon="center_lng", size="users", color="users",
-                         color_continuous_scale="Blues", zoom=10, height=520, center=center,
-                         map_style="carto-positron")
-    fig.update_traces(marker=dict(sizemin=4, opacity=0.85),
-                      hovertemplate="%{text}<br>在场 %{marker.color} 人<extra></extra>",
-                      text=[f"格子 ({q},{r})" for q, r in zip(d["q"], d["r"])])
+    # 人数从 5 到 2,000 跨 400 倍：面积用平方根（面积 ∝ 人数），颜色用对数，
+    # 否则人少的格子会被压成看不清的小白点，而西塔那一格独占整条色阶。
+    d["色阶"] = np.log10(d["users"])
+    fig = px.scatter_map(d, lat="center_lat", lon="center_lng", size="users", color="色阶",
+                         color_continuous_scale=[[0, "#8FBCDA"], [0.5, "#3E86B5"], [1, "#0B3C5D"]],
+                         range_color=(np.log10(5), np.log10(2000)), size_max=40,
+                         zoom=10, height=520, center=center,
+                         map_style="carto-positron", custom_data=["users", "q", "r"])
+    fig.update_traces(marker=dict(sizemin=7, opacity=0.9),
+                      hovertemplate="格子 (%{customdata[1]}, %{customdata[2]})<br>"
+                                    "在场 %{customdata[0]:,} 人<extra></extra>")
+    fig.update_layout(coloraxis_colorbar=dict(
+        title="在场人数", thickness=12,
+        tickvals=[np.log10(v) for v in (5, 10, 30, 100, 300, 1000, 2000)],
+        ticktext=["5", "10", "30", "100", "300", "1,000", "2,000"]))
     return _layout(fig, f"{hour} 点六边形热力（少于 5 人不显示）")
 
 
