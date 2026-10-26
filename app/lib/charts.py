@@ -39,9 +39,10 @@ def bar_linkage(df):
 
 def hex_scatter(df, hour):
     d = df[df["hour"] == hour]
-    fig = px.scatter_mapbox(d, lat="center_lat", lon="center_lng", size="users", color="users",
-                            color_continuous_scale="Blues", zoom=11, height=520)
-    fig.update_layout(mapbox_style="carto-positron")
+    # plotly 6 起 scatter_mapbox 换成 MapLibre 的 scatter_map（mapbox_style → map_style）
+    fig = px.scatter_map(d, lat="center_lat", lon="center_lng", size="users", color="users",
+                         color_continuous_scale="Blues", zoom=11, height=520,
+                         map_style="carto-positron")
     return _layout(fig, f"{hour} 点六边形热力（少于 5 人不显示）")
 
 
