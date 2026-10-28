@@ -91,6 +91,34 @@ python -m pip install -e ".[dev,app]"     # 可编辑安装，含测试与平台
 2. 在项目根目录安装上面那一行；
 3. 在 `notebooks/` 里按编号打开 notebook，从第一格开始运行。
 
+## 一键运行（Docker，无需本地装 MySQL）
+
+```bash
+docker compose up --build
+```
+
+打开 <http://localhost:8501> 就能看到 7 页平台，侧栏可切换 6 个日期（10-03 真实、10-04 起为模拟并带水印）。
+
+- **数据从哪来**：`deploy/db/*.sql` 由 MySQL 容器首次初始化时自动导入。只含 `ads_` / `dim_` 的聚合结果，已做小样本抑制，**不含任何个人信息，也不含原始信令**。
+- **首次启动**约需 2–4 分钟（拉取 `mysql:8.0` 与构建应用镜像）。
+- **重置数据**：`docker compose down -v`，下次启动会重新导入。
+- **端口被占用**：改 `docker-compose.yml` 里 `"8501:8501"` 的左边那个数字。
+
+国内网络拉取慢时（Docker Hub / PyPI 连接超时），可以换源：
+
+```bash
+docker compose build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+docker compose up -d
+```
+
+基础镜像也可以在 Docker Desktop 的 **Settings → Docker Engine** 里配置 `registry-mirrors`。
+
+重新生成种子数据（改了应用层之后）：
+
+```bash
+python tools/export_seed.py --dates 2018-10-03 2018-10-04 2018-10-05 2018-10-06
+```
+
 ## 怎么跑
 
 ```bash

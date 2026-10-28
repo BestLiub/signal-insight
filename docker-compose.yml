@@ -1,0 +1,40 @@
+# 一键运行：docker compose up --build
+# 打开 http://localhost:8501
+#
+# 数据：deploy/db/*.sql 由 MySQL 首次初始化时自动导入。
+# 只含聚合结果（ads_ / dim_），已做小样本抑制，不含任何个人信息。
+services:
+  db:
+    image: mysql:8.0
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_bin
+    # 固定口令仅供本机演示，不要用于任何真实环境
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: signal_warehouse
+      MYSQL_USER: signal_app
+      MYSQL_PASSWORD: signal_app
+    volumes:
+      - ./deploy/db:/docker-entrypoint-initdb.d:ro
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build: .
+    environment:
+      SIGNAL_MYSQL_HOST: db
+      SIGNAL_MYSQL_PORT: "3306"
+      SIGNAL_MYSQL_USER: signal_app
+      SIGNAL_MYSQL_PASSWORD: signal_app
+      SIGNAL_WAREHOUSE_SCHEMA: signal_warehouse
+    ports:
+      - "8501:8501"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

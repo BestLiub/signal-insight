@@ -3,6 +3,7 @@ image/
 reports/
 notebooks/
 tests/
+deploy/
 .git/
 *.db
 .env.ps1
